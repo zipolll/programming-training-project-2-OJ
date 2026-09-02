@@ -10,6 +10,11 @@ from backend.app.api.router import api_router
 from backend.app.core.config import Settings, get_settings
 from backend.app.core.database import Database
 from backend.app.core.exceptions import register_exception_handlers
+from backend.app.modules.agent.client import OpenAICompatibleClient
+from backend.app.modules.agent.crypto import CredentialCipher
+from backend.app.modules.agent.repository import AgentRepository
+from backend.app.modules.agent.task_manager import AgentTaskManager
+from backend.app.modules.agent.tools import AgentTools
 from backend.app.modules.judge.language_service import LanguageService
 from backend.app.modules.judge.repository import LanguageRepository
 from backend.app.modules.judge.service import JudgeService
@@ -73,10 +78,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         application.state.evaluation_task_manager = evaluation_manager
         application.state.submission_service = submission_service
+        agent_repository = AgentRepository(database)
+        agent_cipher = CredentialCipher(resolved_settings.credential_encryption_key)
+        agent_model_client = OpenAICompatibleClient(agent_repository, agent_cipher)
+        agent_manager = AgentTaskManager(
+            agent_repository,
+            agent_model_client,
+            AgentTools(problem_service, language_service, resolved_settings),
+            problem_service,
+            resolved_settings,
+        )
+        application.state.agent_repository = agent_repository
+        application.state.agent_cipher = agent_cipher
+        application.state.agent_model_client = agent_model_client
+        application.state.agent_task_manager = agent_manager
         await evaluation_manager.start()
+        await agent_manager.start()
         try:
             yield
         finally:
+            await agent_manager.stop()
             await evaluation_manager.stop()
 
     application = FastAPI(

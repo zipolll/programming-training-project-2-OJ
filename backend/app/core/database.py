@@ -97,6 +97,78 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created
 ON audit_logs(target_type, target_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created
 ON audit_logs(action, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS agent_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    provider_url TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    encrypted_api_key TEXT NOT NULL,
+    input_price TEXT NOT NULL,
+    output_price TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    request_timeout REAL NOT NULL,
+    max_iterations INTEGER NOT NULL,
+    max_output_tokens INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    task_id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parent_task_id TEXT REFERENCES agent_tasks(task_id),
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','running','success','error','cancelled')),
+    stage TEXT NOT NULL,
+    progress INTEGER NOT NULL,
+    request_json TEXT NOT NULL,
+    draft_json TEXT,
+    final_problem_json TEXT,
+    validation_report_json TEXT,
+    error_code TEXT,
+    safe_error_message TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost TEXT NOT NULL DEFAULT '0',
+    currency TEXT NOT NULL DEFAULT 'USD',
+    usage_estimated INTEGER NOT NULL DEFAULT 0,
+    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_created
+ON agent_tasks(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS agent_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES agent_tasks(task_id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    progress INTEGER NOT NULL,
+    timestamp TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_events_task_id
+ON agent_events(task_id, event_id);
+
+CREATE TABLE IF NOT EXISTS agent_model_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL REFERENCES agent_tasks(task_id) ON DELETE CASCADE,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    total_tokens INTEGER NOT NULL,
+    cost TEXT NOT NULL,
+    usage_estimated INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_imports (
+    task_id TEXT PRIMARY KEY REFERENCES agent_tasks(task_id) ON DELETE CASCADE,
+    problem_id TEXT NOT NULL,
+    imported_at TEXT NOT NULL
+);
 """
 
 

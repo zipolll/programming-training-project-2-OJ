@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     submission_result_limit_bytes: int = 64 * 1024
     submission_rate_limit_per_minute: int = 3
     evaluation_shutdown_timeout_seconds: float = 3.0
+    credential_encryption_key: str | None = None
+    agent_shutdown_timeout_seconds: float = 3.0
+    agent_allow_local_http: bool = True
     session_cookie_name: str = "session_id"
     session_max_age_seconds: int = 7 * 24 * 60 * 60
     session_cookie_secure: bool = False
