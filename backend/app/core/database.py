@@ -72,6 +72,31 @@ CREATE TABLE IF NOT EXISTS submission_testcases (
     error_summary TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (submission_id, evaluation_version, testcase_id)
 );
+
+CREATE TABLE IF NOT EXISTS problem_log_visibility (
+    problem_id TEXT PRIMARY KEY,
+    public_cases INTEGER NOT NULL DEFAULT 0 CHECK (public_cases IN (0, 1)),
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    success INTEGER NOT NULL CHECK (success IN (0, 1)),
+    status INTEGER NOT NULL,
+    changes TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_created
+ON audit_logs(actor_user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target_created
+ON audit_logs(target_type, target_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created
+ON audit_logs(action, created_at DESC, id DESC);
 """
 
 
