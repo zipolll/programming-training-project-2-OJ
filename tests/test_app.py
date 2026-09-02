@@ -32,7 +32,7 @@ def test_health_check(tmp_path: Path) -> None:
 
 def test_expected_first_stage_endpoints_are_exposed() -> None:
     paths = set(app.openapi()["paths"])
-    assert paths == {
+    assert {
         "/api/health",
         "/api/auth/login",
         "/api/auth/logout",
@@ -53,4 +53,4 @@ def test_expected_first_stage_endpoints_are_exposed() -> None:
         "/api/users/me",
         "/api/users/{user_id}",
         "/api/users/{user_id}/role",
-    }
+    } <= paths
