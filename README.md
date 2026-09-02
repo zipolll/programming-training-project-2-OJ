@@ -1,6 +1,6 @@
 # Programming Training Project 2 — Online Judge
 
-程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理、Step 2 语言注册和评测引擎，以及 Step 2/3 Submission 生命周期与管理接口已经实现。日志公开与 AI 命题功能将在后续阶段实现。
+程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理、Step 2 语言注册和评测引擎、Step 2/3 Submission 生命周期，以及 Step 4/5 用户权限、评测日志与访问审计已经实现。前端管理页面与 AI 命题功能仍留待后续阶段。
 
 ## 环境要求
 
@@ -32,14 +32,32 @@ python -m pip install -r requirements-dev.txt
 python -m uvicorn backend.app.main:app --reload
 ```
 
-API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <http://localhost:8000/docs>。本阶段还提供以下用户接口：
+API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <http://localhost:8000/docs>。课程用户接口为：
 
-- `POST /api/users/register`：注册普通用户。
-- `POST /api/users/login`：登录并设置随机的 HttpOnly Session Cookie。
-- `POST /api/users/logout`：注销并立即作废当前 Session。
-- `GET /api/users/me`：查询当前登录用户。
+- `POST /api/users/`：注册普通用户。
+- `POST /api/auth/login`、`POST /api/auth/logout`：登录和登出。
+- `GET /api/users/{user_id}`：本人或管理员查询用户信息和统计。
+- `GET /api/users/`：管理员分页查询用户列表。
+- `POST /api/users/admin`：管理员创建管理员。
+- `PUT /api/users/{user_id}/role`：管理员设置 `user`、`admin` 或 `banned`。
+
+旧的 `/api/users/register|login|logout|me` 路径保留为兼容别名；新代码应使用课程 API 路径。
 
 用户名长度为 3–40 个字符，密码至少 6 位。接口响应不会返回密码、密码哈希或 Session ID。
+
+## 用户角色与权限
+
+| 操作 | 未登录 | user | admin | banned |
+| --- | --- | --- | --- | --- |
+| 查看题目、创建/编辑题目、创建语言、提交 | 401 | 允许 | 允许 | Session 作废 |
+| 查看用户信息 | 401 | 仅本人 | 任意用户 | 不允许 |
+| 用户列表、修改角色 | 401 | 403 | 允许 | 不允许 |
+| 删除题目、重新评测 | 401 | 403 | 允许 | 不允许 |
+| Submission 详情 | 401 | 仅本人 | 任意提交 | 不允许 |
+| 私有评测日志 | 401 | 仅本人 | 任意日志 | 不允许 |
+| 公开评测日志 | 401 | 任意已登录用户 | 任意日志 | 不允许 |
+
+用户变为 `banned` 时，其全部数据库 Session 会立即删除，之后登录返回 403。系统禁止将最后一个有效管理员降级或封禁，避免不可恢复的权限状态。`submit_count` 直接统计该用户持久化 Submission 总数；`resolve_count` 只统计 `status=success` 且最终结果为 `AC` 的不同 `problem_id`，因此同题多次 AC 只算一次，WA、pending 和 error 均不计入。
 
 课程 Step 1 题目接口如下，均使用统一的 `{code, msg, data}` 响应结构：
 
@@ -91,6 +109,14 @@ Submission 的 `status` 只有 `pending`、`success` 和 `error`。`pending` 表
 应用 lifespan 启动一个受统一追踪的单 worker `asyncio.Queue`。提交记录先事务持久化，再入队；worker 会从数据库重新读取 Submission、Problem 和 Language，并调用已有 judge service。启动时会恢复数据库中遗留的 `pending` 记录，关闭时停止接收任务、限时等待队列并取消 worker。每次重评都会原子增加 `evaluation_version`，写回结果时同时匹配版本与 `pending` 状态，旧任务不能覆盖较新的结果。
 
 SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和每个测试点的 `id/result/time/memory/error_summary`。Step 3 的列表与详情接口不会返回测试点明细；这些数据预留给 Step 5 日志接口。stdout、stderr、编译信息和测试点错误摘要在持久化前均有限长处理。
+
+## 评测日志与访问审计
+
+`GET /api/submissions/{submission_id}/log` 返回当前评测版本的逐测试点 `details`、得分和总分。Submission 详情表示一次任务的总体状态；Evaluation Log 表示该任务当前版本的测试点明细，两者不会混在同一响应中。管理员可通过 `PUT /api/problems/{problem_id}/log_visibility` 持久化设置题目 `public_cases`：默认私有；公开后所有已登录用户可查看该题提交的日志，但仍不能借此读取他人的 Submission 总体结果。
+
+独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、日志可见性变更、角色/封禁变更、管理员重评和题目删除。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
+
+数据库初始化会幂等创建 `problem_log_visibility` 和 `audit_logs` 及索引。旧题目没有可见性记录时按私有处理；重复初始化不会删除或重写已有用户、题目、Submission 或测试点结果。
 
 ## 题目存储
 
