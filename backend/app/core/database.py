@@ -24,6 +24,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS languages (
+    name TEXT PRIMARY KEY,
+    file_ext TEXT NOT NULL,
+    compile_args TEXT,
+    run_args TEXT NOT NULL,
+    time_limit REAL NOT NULL,
+    memory_limit INTEGER NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
+);
 """
 
 
