@@ -1,6 +1,6 @@
 # Programming Training Project 2 — Online Judge
 
-程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理，以及 Step 2 语言注册和评测引擎已经实现。Submission 生命周期、日志与 AI 命题功能将在后续阶段实现。
+程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理、Step 2 语言注册和评测引擎，以及 Step 2/3 Submission 生命周期与管理接口已经实现。日志公开与 AI 命题功能将在后续阶段实现。
 
 ## 环境要求
 
@@ -77,6 +77,21 @@ Linux/WSL 下同时通过 `resource.setrlimit` 限制地址空间和 CPU 时间�
 
 该评测器满足课程作业的单用户异步评测、资源限制和多语言要求，但不是面向不可信互联网用户的生产级安全沙箱。它不提供容器/虚拟机隔离、网络隔离、系统调用过滤或多租户防护；不要将其直接暴露给不可信公网流量。
 
+## Submission 生命周期
+
+课程 Step 2/3 接口如下：
+
+- `POST /api/submissions/`：登录用户提交代码并立即获得 `pending` 状态。
+- `GET /api/submissions/`：按用户或题目筛选，支持状态与分页；普通用户始终只能看到自己的提交。
+- `GET /api/submissions/{submission_id}`：提交者本人或管理员查看总体结果。
+- `PUT /api/submissions/{submission_id}/rejudge`：管理员启动重新评测。
+
+Submission 的 `status` 只有 `pending`、`success` 和 `error`。`pending` 表示等待或正在执行；`success` 表示评测流程正常完成，因此用户程序得到 `AC`、`WA`、`CE`、`RE`、`TLE`、`MLE` 或 `UNK` 都属于 `success`；只有评测基础设施、任务数据或调度发生异常时才使用 `error`。测试点结果含义分别为通过、答案错误、编译错误、运行错误、超时、超内存和未知结果。
+
+应用 lifespan 启动一个受统一追踪的单 worker `asyncio.Queue`。提交记录先事务持久化，再入队；worker 会从数据库重新读取 Submission、Problem 和 Language，并调用已有 judge service。启动时会恢复数据库中遗留的 `pending` 记录，关闭时停止接收任务、限时等待队列并取消 worker。每次重评都会原子增加 `evaluation_version`，写回结果时同时匹配版本与 `pending` 状态，旧任务不能覆盖较新的结果。
+
+SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和每个测试点的 `id/result/time/memory/error_summary`。Step 3 的列表与详情接口不会返回测试点明细；这些数据预留给 Step 5 日志接口。stdout、stderr、编译信息和测试点错误摘要在持久化前均有限长处理。
+
 ## 题目存储
 
 每道题保存为 `data/problems/<problem_id>.json`。JSON 包含 `id`、标题与题面、输入输出说明、样例、约束、测试点，以及提示、来源、标签、时间/内存限制、作者和难度等可选字段。`samples` 与 `testcases` 都是由 `{input, output}` 组成的非空列表；可选字段缺省时按课程 API 返回 `""`、`[]`、`3.0` 秒和 `128` MB 等默认值。
@@ -108,7 +123,13 @@ python -m pytest tests/test_problems.py
 python -m pytest tests/test_languages.py tests/test_comparator.py tests/test_judge.py
 ```
 
-在 Windows 原生环境中测试会验证安全降级路径；提交前还应在 Linux/WSL 中运行完整测试，以覆盖 `setrlimit` 与进程组终止逻辑。本阶段刻意不提供 `/api/submissions/` 实现，Submission 持久化、`pending/success/error` 生命周期、列表/筛选/分页、后台调度和重新评测将在下一阶段统一完成。
+只运行 Submission 生命周期测试：
+
+```bash
+python -m pytest tests/test_submissions.py
+```
+
+在 Windows 原生环境中测试会验证安全降级路径；提交前还应在 Linux/WSL 中运行完整测试，以覆盖 `setrlimit` 与进程组终止逻辑。测试使用临时 SQLite 数据库和临时题目目录，不会污染开发数据。
 
 ## 提交规范
 
