@@ -1,6 +1,7 @@
 """Environment-backed application settings."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,10 @@ class Settings(BaseSettings):
     debug: bool = False
     api_prefix: str = "/api"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8501"])
+    database_path: Path = Path("data/runtime/oj.sqlite3")
+    session_cookie_name: str = "session_id"
+    session_max_age_seconds: int = 7 * 24 * 60 * 60
+    session_cookie_secure: bool = False
 
 
 @lru_cache
