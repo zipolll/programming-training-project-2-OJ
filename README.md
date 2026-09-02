@@ -130,6 +130,35 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 python -m streamlit run frontend/app.py
 ```
 
+## Streamlit 前端
+
+前端默认访问 `http://localhost:8000/api`。需要使用其他后端地址时，在启动
+Streamlit 前设置 `OJ_FRONTEND_API_BASE_URL`，例如 PowerShell 中：
+
+```powershell
+$env:OJ_FRONTEND_API_BASE_URL = "http://127.0.0.1:8000/api"
+python -m streamlit run frontend/app.py
+```
+
+页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
+新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测和日志
+可见性管理。AI 智能命题只保留占位入口，不会返回模拟结果。
+
+所有业务数据均通过 FastAPI 接口读取和修改。统一 `ApiClient` 使用一个内存中的
+`httpx.Client` 保存后端 `Set-Cookie`，Cookie 仅存在当前 Streamlit
+`session_state` 所持有的客户端中，不写入文件、不显示值。每次页面完整刷新都会
+通过后端当前用户接口恢复并校验身份；401 会清除本地身份和 Cookie，403 只提示
+权限不足。普通用户没有管理员导航入口，但最终授权始终由后端决定。
+
+Submission 详情在 `pending` 时使用 Streamlit fragment 每秒查询一次；进入
+`success`/`error` 后停止，网络故障时也停止并显示手动重试入口，不使用阻塞
+`sleep`。逐测试点结果按需调用 Step 5 日志接口，不长期缓存无权限或敏感结果。
+
+本地联调顺序：先启动 FastAPI，再启动 Streamlit；注册并登录普通用户，查看题目
+并提交 Python/C++ 代码；随后使用初始管理员登录，检查用户分页、完整题目管理、
+重评和日志可见性；最后退出并确认保护页面从导航消失。运行产生的数据库、题目、
+评测代码和日志位于 Git 忽略的运行目录，联调后应再次执行 `git status` 检查。
+
 ## 质量检查
 
 ```bash
