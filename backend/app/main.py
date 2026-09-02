@@ -12,6 +12,7 @@ from backend.app.core.database import Database
 from backend.app.core.exceptions import register_exception_handlers
 from backend.app.modules.judge.language_service import LanguageService
 from backend.app.modules.judge.repository import LanguageRepository
+from backend.app.modules.judge.service import JudgeService
 from backend.app.modules.problems.repository import ProblemRepository
 from backend.app.modules.problems.service import ProblemService
 from backend.app.modules.users.service import AuthService
@@ -35,6 +36,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.auth_service = auth_service
         application.state.problem_service = problem_service
         application.state.language_service = language_service
+        application.state.judge_service = JudgeService(
+            problem_service, language_service, resolved_settings
+        )
         yield
 
     application = FastAPI(

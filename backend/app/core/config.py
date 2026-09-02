@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8501"])
     database_path: Path = Path("data/runtime/oj.sqlite3")
     problems_path: Path = Path("data/problems")
+    judge_temp_root: Path | None = None
+    judge_compile_timeout_seconds: float = 10.0
+    judge_compile_memory_limit_mb: int = 512
+    judge_output_limit_bytes: int = 64 * 1024
     session_cookie_name: str = "session_id"
     session_max_age_seconds: int = 7 * 24 * 60 * 60
     session_cookie_secure: bool = False
