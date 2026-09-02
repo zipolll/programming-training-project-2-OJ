@@ -1,1 +1,1 @@
-"""Submission lifecycle module."""
+"""Submission persistence, API, and asynchronous evaluation lifecycle."""

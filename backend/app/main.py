@@ -15,6 +15,9 @@ from backend.app.modules.judge.repository import LanguageRepository
 from backend.app.modules.judge.service import JudgeService
 from backend.app.modules.problems.repository import ProblemRepository
 from backend.app.modules.problems.service import ProblemService
+from backend.app.modules.submissions.repository import SubmissionRepository
+from backend.app.modules.submissions.service import SubmissionService
+from backend.app.modules.submissions.task_manager import EvaluationTaskManager
 from backend.app.modules.users.service import AuthService
 
 
@@ -39,7 +42,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.judge_service = JudgeService(
             problem_service, language_service, resolved_settings
         )
-        yield
+        submission_repository = SubmissionRepository(database)
+        evaluation_manager = EvaluationTaskManager(
+            submission_repository,
+            problem_service,
+            language_service,
+            lambda: application.state.judge_service,
+            resolved_settings,
+        )
+        submission_service = SubmissionService(
+            submission_repository,
+            problem_service,
+            language_service,
+            evaluation_manager,
+            resolved_settings,
+        )
+        application.state.submission_repository = submission_repository
+        application.state.evaluation_task_manager = evaluation_manager
+        application.state.submission_service = submission_service
+        await evaluation_manager.start()
+        try:
+            yield
+        finally:
+            await evaluation_manager.stop()
 
     application = FastAPI(
         title=resolved_settings.app_name,
