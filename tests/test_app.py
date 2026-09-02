@@ -34,14 +34,23 @@ def test_expected_first_stage_endpoints_are_exposed() -> None:
     paths = set(app.openapi()["paths"])
     assert paths == {
         "/api/health",
+        "/api/auth/login",
+        "/api/auth/logout",
         "/api/languages/",
+        "/api/logs/access/",
         "/api/problems/",
         "/api/problems/{problem_id}",
+        "/api/problems/{problem_id}/log_visibility",
         "/api/submissions/",
         "/api/submissions/{submission_id}",
+        "/api/submissions/{submission_id}/log",
         "/api/submissions/{submission_id}/rejudge",
+        "/api/users/",
+        "/api/users/admin",
         "/api/users/register",
         "/api/users/login",
         "/api/users/logout",
         "/api/users/me",
+        "/api/users/{user_id}",
+        "/api/users/{user_id}/role",
     }
