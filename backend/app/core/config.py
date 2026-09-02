@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8501"])
     database_path: Path = Path("data/runtime/oj.sqlite3")
+    problems_path: Path = Path("data/problems")
     session_cookie_name: str = "session_id"
     session_max_age_seconds: int = 7 * 24 * 60 * 60
     session_cookie_secure: bool = False

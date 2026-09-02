@@ -10,6 +10,8 @@ from backend.app.api.router import api_router
 from backend.app.core.config import Settings, get_settings
 from backend.app.core.database import Database
 from backend.app.core.exceptions import register_exception_handlers
+from backend.app.modules.problems.repository import ProblemRepository
+from backend.app.modules.problems.service import ProblemService
 from backend.app.modules.users.service import AuthService
 
 
@@ -22,9 +24,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database = Database(resolved_settings.database_path)
         await database.initialize()
         auth_service = AuthService(database, resolved_settings)
+        problem_service = ProblemService(ProblemRepository(resolved_settings.problems_path))
         await auth_service.ensure_initial_admin()
+        await problem_service.initialize()
         application.state.database = database
         application.state.auth_service = auth_service
+        application.state.problem_service = problem_service
         yield
 
     application = FastAPI(
