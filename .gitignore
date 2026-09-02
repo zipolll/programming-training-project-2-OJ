@@ -28,6 +28,7 @@ data/runtime/*
 data/*.db
 data/*.sqlite*
 !data/runtime/.gitkeep
+data/problems/.*.tmp
 
 # Judge artifacts
 judge-workspace/
