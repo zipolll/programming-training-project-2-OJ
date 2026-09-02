@@ -34,6 +34,44 @@ CREATE TABLE IF NOT EXISTS languages (
     memory_limit INTEGER NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))
 );
+
+CREATE TABLE IF NOT EXISTS submissions (
+    submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    problem_id TEXT NOT NULL,
+    language TEXT NOT NULL REFERENCES languages(name),
+    code TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'error')),
+    result TEXT CHECK (result IS NULL OR result IN ('AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', 'UNK')),
+    score INTEGER,
+    counts INTEGER NOT NULL,
+    compile_info TEXT,
+    stdout TEXT,
+    stderr TEXT,
+    time REAL,
+    memory REAL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    evaluation_version INTEGER NOT NULL DEFAULT 1 CHECK (evaluation_version > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_user_created
+ON submissions(user_id, created_at DESC, submission_id DESC);
+CREATE INDEX IF NOT EXISTS idx_submissions_problem_created
+ON submissions(problem_id, created_at DESC, submission_id DESC);
+CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
+
+CREATE TABLE IF NOT EXISTS submission_testcases (
+    submission_id INTEGER NOT NULL REFERENCES submissions(submission_id) ON DELETE CASCADE,
+    evaluation_version INTEGER NOT NULL,
+    testcase_id INTEGER NOT NULL,
+    result TEXT NOT NULL CHECK (result IN ('AC', 'WA', 'TLE', 'MLE', 'RE', 'CE', 'UNK')),
+    time REAL NOT NULL,
+    memory REAL NOT NULL,
+    error_summary TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (submission_id, evaluation_version, testcase_id)
+);
 """
 
 
