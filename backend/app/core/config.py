@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     judge_compile_timeout_seconds: float = 10.0
     judge_compile_memory_limit_mb: int = 512
     judge_output_limit_bytes: int = 64 * 1024
+    submission_code_limit: int = 1_000_000
+    submission_result_limit_bytes: int = 64 * 1024
+    submission_rate_limit_per_minute: int = 3
+    evaluation_shutdown_timeout_seconds: float = 3.0
     session_cookie_name: str = "session_id"
     session_max_age_seconds: int = 7 * 24 * 60 * 60
     session_cookie_secure: bool = False
