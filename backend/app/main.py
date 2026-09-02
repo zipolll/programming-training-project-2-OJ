@@ -13,12 +13,16 @@ from backend.app.core.exceptions import register_exception_handlers
 from backend.app.modules.judge.language_service import LanguageService
 from backend.app.modules.judge.repository import LanguageRepository
 from backend.app.modules.judge.service import JudgeService
+from backend.app.modules.logs.audit_repository import AuditRepository
+from backend.app.modules.logs.audit_service import AuditService
+from backend.app.modules.logs.repository import EvaluationLogRepository
+from backend.app.modules.logs.service import EvaluationLogService
 from backend.app.modules.problems.repository import ProblemRepository
 from backend.app.modules.problems.service import ProblemService
 from backend.app.modules.submissions.repository import SubmissionRepository
 from backend.app.modules.submissions.service import SubmissionService
 from backend.app.modules.submissions.task_manager import EvaluationTaskManager
-from backend.app.modules.users.service import AuthService
+from backend.app.modules.users.service import AuthService, UserService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -58,6 +62,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolved_settings,
         )
         application.state.submission_repository = submission_repository
+        audit_service = AuditService(AuditRepository(database))
+        application.state.audit_service = audit_service
+        application.state.user_service = UserService(auth_service, audit_service)
+        application.state.evaluation_log_service = EvaluationLogService(
+            EvaluationLogRepository(database),
+            submission_repository,
+            problem_service,
+            audit_service,
+        )
         application.state.evaluation_task_manager = evaluation_manager
         application.state.submission_service = submission_service
         await evaluation_manager.start()
