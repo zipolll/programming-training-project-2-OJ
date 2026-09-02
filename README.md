@@ -1,12 +1,12 @@
 # Programming Training Project 2 — Online Judge
 
-程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证与课程 Step 1 题目管理已经实现；评测、提交、日志与 AI 命题功能将在后续提交中逐步实现。
+程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理，以及 Step 2 语言注册和评测引擎已经实现。Submission 生命周期、日志与 AI 命题功能将在后续阶段实现。
 
 ## 环境要求
 
-- Python 3.10 或更高版本
-- 最终评测环境为 Linux；Windows 用户建议使用 WSL
-- C++ 评测功能后续需要 GCC 9+ 和 C++14
+- Python 3.10 或更高版本；课程目标解释器版本为 Python 3.10
+- C++ 需要 GCC 9+，统一使用 `-std=c++14` 编译
+- 最终评测环境为 Linux；Windows 用户强烈建议在 WSL 中运行评测服务
 
 ## 安装
 
@@ -22,7 +22,7 @@ python -m pip install -r requirements-dev.txt
 
 如需覆盖默认配置，将 `.env.example` 复制为 `.env` 后修改。不要提交 `.env` 或任何密钥。
 
-默认 SQLite 数据库位于 `data/runtime/oj.sqlite3`，启动时自动创建数据表与初始管理员（用户名 `admin`，密码 `admintestpassword`）。数据库文件和 `.env` 均已被 Git 忽略。可通过 `OJ_DATABASE_PATH` 修改数据库位置，通过 `OJ_PROBLEMS_PATH` 修改题目目录，通过 `OJ_SESSION_MAX_AGE_SECONDS` 修改 Session 有效期；生产 HTTPS 环境应设置 `OJ_SESSION_COOKIE_SECURE=true`。
+默认 SQLite 数据库位于 `data/runtime/oj.sqlite3`，启动时自动创建数据表、内置 Python/C++ 语言和初始管理员（用户名 `admin`，密码 `admintestpassword`）。数据库文件和 `.env` 均已被 Git 忽略。可通过 `OJ_DATABASE_PATH` 修改数据库位置，通过 `OJ_PROBLEMS_PATH` 修改题目目录，通过 `OJ_SESSION_MAX_AGE_SECONDS` 修改 Session 有效期；生产 HTTPS 环境应设置 `OJ_SESSION_COOKIE_SECURE=true`。
 
 ## 启动
 
@@ -49,6 +49,34 @@ API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <
 - `PUT /api/problems/{problem_id}`：登录用户完整替换题目配置。
 - `DELETE /api/problems/{problem_id}`：管理员删除题目。
 
+课程 Step 2 语言接口：
+
+- `GET /api/languages/`：查询当前启用的语言名称列表。
+- `POST /api/languages/`：登录用户注册语言；请求字段严格遵循课程 API 的 `name`、`file_ext`、`compile_cmd`、`run_cmd`、`time_limit` 和 `memory_limit`。
+
+命令模板仅允许 `{src}`、`{exe}` 占位符。系统会用 `shlex` 将 API 中的字符串模板转换为参数数组，拒绝管道、重定向、命令连接符、变量展开和未知占位符；执行始终使用 `asyncio.create_subprocess_exec`，不会启用 shell。语言配置持久化在公共异步 SQLite 数据层中，名称全局唯一。
+
+## 评测引擎
+
+下一阶段的 Submission 后台任务可直接调用异步接口：
+
+```python
+result = await request.app.state.judge_service.judge(
+    JudgeRequest(problem_id="P1001", language="python", code=source_code)
+)
+```
+
+评测器在操作系统临时目录中为每次请求创建独立工作区，编译一次后逐个运行题目的所有测试点，结束时清理源文件、可执行文件和临时数据。每个 AC 测试点计 10 分；单点结果为 `AC`、`WA`、`TLE`、`MLE`、`RE`、`CE` 或 `UNK`。它会限制采集的 stdout/stderr，按 UTF-8 严格解码输出，并且仅忽略每行末尾空格及输出末尾多余换行。
+
+Linux/WSL 下同时通过 `resource.setrlimit` 限制地址空间和 CPU 时间，并由 `psutil` 监控主进程及其递归子进程；超时或超内存时终止整个进程组。Windows 下通过 `psutil` 监控和终止进程树，并使用异步墙钟超时，但没有与 Linux `setrlimit` 完全等价的内核级限制，因此属于开发环境的安全降级。可配置项包括：
+
+- `OJ_JUDGE_COMPILE_TIMEOUT_SECONDS`：编译超时，默认 10 秒。
+- `OJ_JUDGE_COMPILE_MEMORY_LIMIT_MB`：编译内存上限，默认 512 MB。
+- `OJ_JUDGE_OUTPUT_LIMIT_BYTES`：每条 stdout/stderr 流的最大采集量，默认 64 KiB。
+- `OJ_JUDGE_TEMP_ROOT`：可选的临时目录根；必须指向项目源码树之外的受控目录。未设置时使用操作系统临时目录。
+
+该评测器满足课程作业的单用户异步评测、资源限制和多语言要求，但不是面向不可信互联网用户的生产级安全沙箱。它不提供容器/虚拟机隔离、网络隔离、系统调用过滤或多租户防护；不要将其直接暴露给不可信公网流量。
+
 ## 题目存储
 
 每道题保存为 `data/problems/<problem_id>.json`。JSON 包含 `id`、标题与题面、输入输出说明、样例、约束、测试点，以及提示、来源、标签、时间/内存限制、作者和难度等可选字段。`samples` 与 `testcases` 都是由 `{input, output}` 组成的非空列表；可选字段缺省时按课程 API 返回 `""`、`[]`、`3.0` 秒和 `128` MB 等默认值。
@@ -73,6 +101,14 @@ python -m pytest
 ```bash
 python -m pytest tests/test_problems.py
 ```
+
+只运行评测与语言测试：
+
+```bash
+python -m pytest tests/test_languages.py tests/test_comparator.py tests/test_judge.py
+```
+
+在 Windows 原生环境中测试会验证安全降级路径；提交前还应在 Linux/WSL 中运行完整测试，以覆盖 `setrlimit` 与进程组终止逻辑。本阶段刻意不提供 `/api/submissions/` 实现，Submission 持久化、`pending/success/error` 生命周期、列表/筛选/分页、后台调度和重新评测将在下一阶段统一完成。
 
 ## 提交规范
 
