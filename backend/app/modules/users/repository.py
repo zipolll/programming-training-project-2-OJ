@@ -5,7 +5,7 @@ from datetime import datetime
 import aiosqlite
 
 from backend.app.core.database import Database
-from backend.app.modules.users.models import User, UserRole
+from backend.app.modules.users.models import User, UserRole, UserStatistics
 
 
 def _serialize_datetime(value: datetime) -> str:
@@ -66,6 +66,85 @@ class UserRepository:
             )
             await connection.commit()
 
+    async def set_role_preserving_last_admin(self, user_id: int, role: UserRole) -> bool:
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+            row = await cursor.fetchone()
+            if row is None:
+                await connection.rollback()
+                return False
+            if row["role"] == UserRole.ADMIN.value and role is not UserRole.ADMIN:
+                cursor = await connection.execute(
+                    "SELECT COUNT(*) FROM users WHERE role = 'admin'"
+                )
+                count_row = await cursor.fetchone()
+                if int(count_row[0]) <= 1:
+                    await connection.rollback()
+                    return False
+            await connection.execute(
+                "UPDATE users SET role = ? WHERE id = ?", (role.value, user_id)
+            )
+            await connection.commit()
+        return True
+
+    async def get_with_statistics(self, user_id: int) -> UserStatistics | None:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT u.*,
+                       COUNT(s.submission_id) AS submit_count,
+                       COUNT(DISTINCT CASE WHEN s.status = 'success' AND s.result = 'AC'
+                                           THEN s.problem_id END) AS resolve_count
+                FROM users AS u
+                LEFT JOIN submissions AS s ON s.user_id = u.id
+                WHERE u.id = ?
+                GROUP BY u.id
+                """,
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return UserStatistics(
+            user=_deserialize_user(row),
+            submit_count=int(row["submit_count"]),
+            resolve_count=int(row["resolve_count"]),
+        )
+
+    async def list_with_statistics(
+        self, *, page: int | None, page_size: int | None
+    ) -> tuple[int, list[UserStatistics]]:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute("SELECT COUNT(*) FROM users")
+            total_row = await cursor.fetchone()
+            sql = """
+                SELECT u.*,
+                       COUNT(s.submission_id) AS submit_count,
+                       COUNT(DISTINCT CASE WHEN s.status = 'success' AND s.result = 'AC'
+                                           THEN s.problem_id END) AS resolve_count
+                FROM users AS u
+                LEFT JOIN submissions AS s ON s.user_id = u.id
+                GROUP BY u.id
+                ORDER BY u.id
+            """
+            parameters: list[object] = []
+            if page_size is not None:
+                sql += " LIMIT ? OFFSET ?"
+                parameters.extend((page_size, ((page or 1) - 1) * page_size))
+            cursor = await connection.execute(sql, parameters)
+            rows = await cursor.fetchall()
+        users = [
+            UserStatistics(
+                user=_deserialize_user(row),
+                submit_count=int(row["submit_count"]),
+                resolve_count=int(row["resolve_count"]),
+            )
+            for row in rows
+        ]
+        return int(total_row[0]), users
+
+
 
 class SessionRepository:
     def __init__(self, database: Database) -> None:
@@ -114,4 +193,9 @@ class SessionRepository:
             await connection.execute(
                 "DELETE FROM sessions WHERE expires_at <= ?", (_serialize_datetime(now),)
             )
+            await connection.commit()
+
+    async def delete_for_user(self, user_id: int) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
             await connection.commit()

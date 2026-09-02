@@ -47,3 +47,16 @@ class PublicUser(BaseModel):
             role=user.role,
             created_at=user.created_at,
         )
+
+
+class RoleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: UserRole
+
+
+@dataclass(frozen=True)
+class UserStatistics:
+    user: User
+    submit_count: int
+    resolve_count: int

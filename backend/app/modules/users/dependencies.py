@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request
 
 from backend.app.modules.users.models import User, UserRole
-from backend.app.modules.users.service import AuthService
+from backend.app.modules.users.service import AuthService, BannedUserError
 
 
 async def get_auth_service(request: Request) -> AuthService:
@@ -19,7 +19,10 @@ async def get_current_user(
     session_id = request.cookies.get(auth_service.settings.session_cookie_name)
     if not session_id:
         return None
-    return await auth_service.get_user_for_session(session_id)
+    try:
+        return await auth_service.get_user_for_session(session_id)
+    except BannedUserError as exc:
+        raise HTTPException(status_code=403, detail="User is banned") from exc
 
 
 async def require_login(
