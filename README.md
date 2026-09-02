@@ -141,8 +141,8 @@ python -m streamlit run frontend/app.py
 ```
 
 页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
-新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测和日志
-可见性管理。AI 智能命题只保留占位入口，不会返回模拟结果。
+新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、日志
+可见性管理，以及管理员专用的 AI Agent 智能命题工作台。
 
 所有业务数据均通过 FastAPI 接口读取和修改。统一 `ApiClient` 使用一个内存中的
 `httpx.Client` 保存后端 `Set-Cookie`，Cookie 仅存在当前 Streamlit
@@ -158,6 +158,79 @@ Submission 详情在 `pending` 时使用 Streamlit fragment 每秒查询一次�
 并提交 Python/C++ 代码；随后使用初始管理员登录，检查用户分页、完整题目管理、
 重评和日志可见性；最后退出并确认保护页面从导航消失。运行产生的数据库、题目、
 评测代码和日志位于 Git 忽略的运行目录，联调后应再次执行 `git status` 检查。
+
+## AI Agent 智能命题（Advance R1–R4）
+
+AI 页面只对后端 Session 判定的管理员开放。先生成 Fernet 主密钥并通过环境变量
+`OJ_CREDENTIAL_ENCRYPTION_KEY` 提供；主密钥不进入数据库或 Git：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+模型配置包括 OpenAI-compatible Provider URL、模型名、API Key、输入/输出每百万
+Token 单价、币种、超时、最大修正轮数和最大输出 Token。API Key 使用 Fernet 加密
+后写入 SQLite；查询只返回 `********` 和 `has_api_key`，审计日志也不保存密钥。
+未配置或主密钥无效时，AI 接口明确返回不可用，基础 OJ 仍可启动。Provider 默认
+必须为 HTTPS；开发模式仅允许 localhost/loopback 使用 HTTP，拒绝 URL 凭据、元数据
+地址、query 和 fragment。模型请求不记录 Authorization Header，也不自动重定向。
+
+管理员 API 均为异步接口，沿用 `{code,msg,data}` 响应：
+
+- `GET /api/agent/config`：返回脱敏配置与加密可用状态。
+- `PUT /api/agent/config`：保存配置；`api_key` 留空表示保留已加密值。
+- `POST /api/agent/config/test`：发起最小结构化连接测试。
+- `POST /api/agent/tasks`：提交知识点、难度、题型、算法、禁用知识、数据规模、资源
+  限制、背景、测试点数、补充要求和可选 `existing_problem_id`，立即返回 `pending`。
+- `GET /api/agent/tasks` 与 `GET /api/agent/tasks/{task_id}`：查询当前管理员自己的
+  任务、结果、验证报告和本轮用量。
+- `GET /api/agent/tasks/{task_id}/events?after_id=N`：最多返回 200 条增量事件。
+- `POST /api/agent/tasks/{task_id}/cancel`：设置持久化取消标记，并取消当前模型请求或
+  Judge 操作；Judge 的取消处理会终止进程树。
+- `POST /api/agent/tasks/{task_id}/refine`，参数 `feedback`：创建保留父任务的新 revision。
+- `POST /api/agent/tasks/{task_id}/import`，参数 `confirm`、`update_existing`：人工确认后
+  通过现有 ProblemService 新增或更新；同一任务重复导入幂等。
+
+任务由 FastAPI lifespan 所有的单 worker `asyncio.Queue` 运行，状态为 `pending →
+running → success/error/cancelled`。重启时，尚未付费的 pending 会恢复；遗留 running
+会标记为 `error/service_restarted`，不会自动产生第二次费用。事件驱动前端每秒增量
+轮询，终态或网络错误即停止，不使用虚假进度动画。
+
+Agent Loop 和受控工具关系如下：
+
+```mermaid
+flowchart LR
+  A[requirement_analysis] --> B[retrieve_context]
+  B --> C[design_problem]
+  C --> D[generate_solution]
+  D --> E[generate_testcases]
+  E --> F[validate_schema]
+  F --> G[execute_reference]
+  G --> H[validate_testcases]
+  H --> I[review_quality]
+  I -->|阻断错误且未达上限| J[revise]
+  J --> F
+  I -->|通过| K[finalize]
+```
+
+固定工具注册表仅包含 `search_problem_bank`、`validate_problem_schema`、
+`execute_reference_solution`、`validate_sample_outputs`、`validate_testcases`、
+`evaluate_counterexamples` 和 `analyze_test_coverage`。它不包含 shell、任意文件、任意
+URL 或互联网工具。检索只返回有限题目摘要；模型 JSON 始终经过 Pydantic 校验；
+参考程序、样例、私有测试点和典型错误解均通过现有 JudgeService，在操作系统临时
+目录执行并自动清理。验证失败会把结构化报告反馈给模型，默认最多修正三轮；仍失败
+则保留报告并禁止导入。
+
+每次模型调用优先读取 `usage.prompt_tokens/completion_tokens`（也兼容
+`input_tokens/output_tokens`），分别持久化并累计。费用使用 Decimal 按
+`input/1_000_000 × input_price + output/1_000_000 × output_price` 计算。Provider 未
+返回完整 usage 时按 UTF-8 JSON 文本约四字符一个 Token 粗略估算，并设置
+`usage_estimated=true`；该方法不等同于厂商 tokenizer，只适合界面参考。失败或取消
+不会清零已经发生的 Token 和费用。
+
+测试通过 `httpx.MockTransport` 或本地 OpenAI-compatible 假服务，不访问真实模型、
+不消耗费用。平台限制与基础 Judge 相同：这是一套课程验收用的受限本地执行环境，
+不是可直接暴露公网的多租户生产沙箱；Windows 缺少 Linux `setrlimit` 的内核级隔离。
 
 ## 质量检查
 
