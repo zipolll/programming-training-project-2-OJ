@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
 from backend.app.modules.judge.language_service import LanguageNotFoundError
+from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.service import ProblemNotFoundError
 from backend.app.modules.submissions.models import SubmissionRequest, SubmissionStatus
 from backend.app.modules.submissions.service import (
@@ -24,6 +25,10 @@ router = APIRouter()
 
 async def get_submission_service(request: Request) -> SubmissionService:
     return request.app.state.submission_service
+
+
+async def get_audit_service(request: Request) -> AuditService:
+    return request.app.state.audit_service
 
 
 @router.post("/", response_model=ApiResponse)
@@ -79,12 +84,21 @@ async def rejudge_submission(
     submission_id: int,
     current_user: Annotated[User, Depends(require_admin)],
     service: Annotated[SubmissionService, Depends(get_submission_service)],
+    audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ApiResponse:
-    del current_user
     try:
         submission = await service.rejudge(submission_id)
     except SubmissionNotFoundError as exc:
         raise HTTPException(status_code=404, detail="submission not found") from exc
+    await audit.record(
+        actor_user_id=current_user.id,
+        action="rejudge_submission",
+        target_type="submission",
+        target_id=submission_id,
+        success=True,
+        status=200,
+        changes={"evaluation_version": submission.evaluation_version},
+    )
     return ApiResponse(msg="rejudge started", data=submission_summary(submission))
 
 

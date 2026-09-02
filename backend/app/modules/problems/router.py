@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
 from backend.app.core.responses import ApiResponse
+from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.models import Problem
 from backend.app.modules.problems.service import (
     ProblemAlreadyExistsError,
@@ -21,6 +22,10 @@ router = APIRouter()
 
 async def get_problem_service(request: Request) -> ProblemService:
     return request.app.state.problem_service
+
+
+async def get_audit_service(request: Request) -> AuditService:
+    return request.app.state.audit_service
 
 
 async def _parse_problem(request: Request) -> Problem:
@@ -85,14 +90,22 @@ async def delete_problem(
     problem_id: str,
     current_user: Annotated[User, Depends(require_admin)],
     problem_service: Annotated[ProblemService, Depends(get_problem_service)],
+    audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ApiResponse:
-    del current_user
     try:
         await problem_service.delete_problem(problem_id)
     except ValueError as exc:
         raise _invalid_problem_id() from exc
     except ProblemNotFoundError as exc:
         raise HTTPException(status_code=404, detail="problem not found") from exc
+    await audit.record(
+        actor_user_id=current_user.id,
+        action="delete_problem",
+        target_type="problem",
+        target_id=problem_id,
+        success=True,
+        status=200,
+    )
     return ApiResponse(msg="delete success", data={"id": problem_id})
 
 
