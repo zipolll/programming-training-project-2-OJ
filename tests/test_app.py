@@ -34,6 +34,7 @@ def test_expected_first_stage_endpoints_are_exposed() -> None:
     paths = set(app.openapi()["paths"])
     assert paths == {
         "/api/health",
+        "/api/languages/",
         "/api/problems/",
         "/api/problems/{problem_id}",
         "/api/users/register",
