@@ -4,6 +4,7 @@ import streamlit as st
 
 from frontend.components.common import show_error
 from frontend.models import navigation_for
+from frontend.pages.agent import render_agent
 from frontend.pages.auth import (
     render_login,
     render_logout,
@@ -33,11 +34,6 @@ def render_home() -> None:
     st.markdown("通过左侧导航访问用户、题目、提交和评测日志功能。")
 
 
-def render_ai_placeholder() -> None:
-    st.title("AI 智能命题")
-    st.info("此入口为后续 Advance 阶段预留；本阶段不会生成或返回伪造结果。")
-
-
 def main() -> None:
     st.set_page_config(page_title="Programming Training OJ", page_icon="⚖️", layout="wide")
     api = get_api_client()
@@ -62,8 +58,8 @@ def main() -> None:
         render_logout(api)
     elif page == "题目列表":
         render_problem_list(api)
-    elif page == "AI 智能命题":
-        render_ai_placeholder()
+    elif page == "AI 智能命题" and role == "admin":
+        render_agent(api)
     elif user is None:
         st.error("请先登录。")
     elif page == "个人信息":

@@ -64,7 +64,7 @@ def build_problem_payload(values: dict[str, Any]) -> dict[str, Any]:
 
 def navigation_for(role: str | None) -> list[str]:
     if role is None:
-        return ["首页", "注册", "登录", "题目列表", "AI 智能命题"]
+        return ["首页", "注册", "登录", "题目列表"]
     pages = [
         "首页",
         "题目列表",
@@ -73,9 +73,9 @@ def navigation_for(role: str | None) -> list[str]:
         "提交记录",
         "个人信息",
         "退出",
-        "AI 智能命题",
     ]
     if role == "admin":
+        pages.insert(-1, "AI 智能命题")
         pages.insert(-2, "用户管理")
         pages.insert(-2, "日志可见性")
     return pages
