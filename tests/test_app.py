@@ -22,6 +22,12 @@ def test_health_check() -> None:
     }
 
 
-def test_only_health_endpoint_is_exposed() -> None:
+def test_expected_first_stage_endpoints_are_exposed() -> None:
     paths = set(app.openapi()["paths"])
-    assert paths == {"/api/health"}
+    assert paths == {
+        "/api/health",
+        "/api/users/register",
+        "/api/users/login",
+        "/api/users/logout",
+        "/api/users/me",
+    }
