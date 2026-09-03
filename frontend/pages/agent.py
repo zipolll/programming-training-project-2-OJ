@@ -19,6 +19,15 @@ from frontend.data_access import invalidate_problem_cache, load_problem_summarie
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
+PROBLEM_TYPES = [
+    "基础编程",
+    "算法设计",
+    "数据结构",
+    "数学",
+    "字符串",
+    "图论",
+    "动态规划",
+]
 
 
 def _config(api: ApiClient) -> None:
@@ -135,43 +144,69 @@ def _authoring_form(api: ApiClient) -> None:
     except Exception:
         problems = []
     with st.form("agent-authoring"):
-        section_header("核心目标", icon="🎯")
+        section_header(
+            "命题方向",
+            "先确定题目考查内容，其余细节可以交给 AI 完成。",
+            icon="🎯",
+        )
         knowledge = st.text_input(
-            "必须覆盖的知识点（逗号分隔）", placeholder=REQUIRED_PLACEHOLDER
+            "核心知识点",
+            placeholder=REQUIRED_PLACEHOLDER,
+            help="多个知识点使用逗号分隔；生成的解法必须使用这些知识点。",
         )
-        difficulty = st.selectbox("目标难度", ["入门", "简单", "中等", "困难"])
-        problem_type = st.text_input(
-            "题目类型", "算法题", placeholder=REQUIRED_PLACEHOLDER
+        difficulty_col, type_col = st.columns(2)
+        difficulty = difficulty_col.selectbox(
+            "目标难度", ["入门", "简单", "中等", "困难"]
         )
-        section_header("算法约束", icon="🧠")
-        algorithm = st.text_input("期望算法或复杂度", placeholder=REQUIRED_PLACEHOLDER)
-        forbidden = st.text_input(
-            "禁止知识点（逗号分隔）", placeholder=OPTIONAL_PLACEHOLDER
+        problem_type = type_col.selectbox(
+            "题目类型",
+            PROBLEM_TYPES,
+            index=1,
+            accept_new_options=True,
+            help="可选择常用类型，也可以直接输入自定义类型。",
         )
-        scale = st.text_input("数据规模", placeholder=REQUIRED_PLACEHOLDER)
-        section_header("评测资源", icon="⏱️")
-        left, right = st.columns(2)
-        time_limit = left.number_input("时间限制（秒）", 0.1, 60.0, 2.0)
-        memory_limit = right.number_input("内存限制（MB）", 16, 4096, 128)
-        testcase_count = st.number_input("测试点数量", 1, 100, 10)
-        section_header("背景与改编", icon="🎨")
-        background = st.text_input("背景偏好", placeholder=OPTIONAL_PLACEHOLDER)
-        adapt = st.checkbox("基于已有题目改编")
-        options = [""] + [item["id"] for item in problems]
-        existing = st.selectbox("已有题目", options, disabled=not adapt)
-        section_header("补充要求", icon="📝")
-        additional = st.text_area("补充要求", placeholder=OPTIONAL_PLACEHOLDER)
+        additional = st.text_area(
+            "补充要求", placeholder=OPTIONAL_PLACEHOLDER, height=100
+        )
+
+        with st.expander("高级设置（选填）"):
+            section_header(
+                "生成限制",
+                "留空时由 AI 根据知识点和难度自行决定。",
+                icon="🧠",
+            )
+            algorithm = st.text_input(
+                "期望算法或复杂度",
+                placeholder=OPTIONAL_PLACEHOLDER,
+                help="例如：双指针、O(n log n)。留空时由 AI 选择。",
+            )
+            forbidden = st.text_input(
+                "避免使用的知识点",
+                placeholder=OPTIONAL_PLACEHOLDER,
+                help="多个知识点使用逗号分隔；生成的解法不会采用这些内容。",
+            )
+            scale = st.text_input(
+                "数据规模",
+                placeholder=OPTIONAL_PLACEHOLDER,
+                help="例如：n ≤ 100000。留空时由 AI 结合资源限制确定。",
+            )
+            section_header("评测设置", icon="⏱️")
+            left, right = st.columns(2)
+            time_limit = left.number_input("时间限制（秒）", 0.1, 60.0, 2.0)
+            memory_limit = right.number_input("内存限制（MB）", 16, 4096, 128)
+            testcase_count = st.number_input("测试点数量", 1, 100, 10)
+            section_header("背景与改编", icon="🎨")
+            background = st.text_input("背景偏好", placeholder=OPTIONAL_PLACEHOLDER)
+            adapt = st.checkbox("基于已有题目改编")
+            options = [""] + [item["id"] for item in problems]
+            existing = st.selectbox("已有题目", options, disabled=not adapt)
         submitted = st.form_submit_button("创建命题任务")
     if submitted:
         form_errors = []
         if not knowledge.strip():
-            form_errors.append("请输入必须覆盖的知识点。")
+            form_errors.append("请输入核心知识点。")
         if not problem_type.strip():
-            form_errors.append("请输入题目类型。")
-        if not algorithm.strip():
-            form_errors.append("请输入期望算法或复杂度。")
-        if not scale.strip():
-            form_errors.append("请输入数据规模。")
+            form_errors.append("请选择题目类型。")
         if adapt and not existing:
             form_errors.append("请选择需要改编的已有题目。")
         if form_errors:

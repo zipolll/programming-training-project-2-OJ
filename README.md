@@ -204,8 +204,9 @@ AI API 均要求登录，任务按当前用户隔离，并沿用 `{code,msg,data
 - `GET /api/agent/config`：返回脱敏配置与加密可用状态。
 - `PUT /api/agent/config`：保存配置；`api_key` 留空表示保留已加密值。
 - `POST /api/agent/config/test`：发起最小结构化连接测试。
-- `POST /api/agent/tasks`：提交知识点、难度、题型、算法、禁用知识、数据规模、资源
-  限制、背景、测试点数、补充要求和可选 `existing_problem_id`，立即返回 `pending`。
+- `POST /api/agent/tasks`：提交知识点、难度和题型，并可选指定算法、避免使用的知识点、
+  数据规模、资源限制、背景、测试点数、补充要求及 `existing_problem_id`，立即返回
+  `pending`。算法和数据规模留空时由 Agent 自行确定。
 - `GET /api/agent/tasks` 与 `GET /api/agent/tasks/{task_id}`：查询当前用户自己的
   任务、结果、验证报告和本轮用量。
 - `GET /api/agent/tasks/{task_id}/events?after_id=N`：最多返回 200 条增量事件。
