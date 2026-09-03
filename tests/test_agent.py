@@ -227,13 +227,81 @@ def test_pending_task_can_be_cancelled(agent_client) -> None:
     assert wait_terminal(client, task_id)["status"] in {"cancelled", "success"}
 
 
-def test_regular_user_cannot_access_agent(agent_client) -> None:
-    client, _, _ = agent_client
+def test_regular_user_has_isolated_agent_config_and_tasks(agent_client) -> None:
+    client, database, _ = agent_client
+    assert client.put("/api/agent/config", json=config_payload()).status_code == 200
     client.post("/api/auth/logout")
     client.post("/api/users/register", json={"username": "alice", "password": "secret1"})
     client.post("/api/auth/login", json={"username": "alice", "password": "secret1"})
-    assert client.get("/api/agent/config").status_code == 403
-    assert client.post("/api/agent/tasks", json=authoring_payload()).status_code == 403
+    empty = client.get("/api/agent/config")
+    assert empty.status_code == 200 and empty.json()["data"]["configured"] is False
+    assert client.post("/api/agent/tasks", json=authoring_payload()).status_code == 503
+
+    alice_config = config_payload(model_name="alice-model", currency="CNY")
+    assert client.put("/api/agent/config", json=alice_config).status_code == 200
+    assert client.get("/api/agent/config").json()["data"]["model_name"] == "alice-model"
+    alice_task = client.post("/api/agent/tasks", json=authoring_payload()).json()["data"]
+
+    client.post("/api/auth/logout")
+    client.post(
+        "/api/auth/login", json={"username": "admin", "password": "admintestpassword"}
+    )
+    assert client.get("/api/agent/config").json()["data"]["model_name"] == "test-model"
+    assert client.get(f"/api/agent/tasks/{alice_task['task_id']}").status_code == 404
+    assert all(
+        item["task_id"] != alice_task["task_id"]
+        for item in client.get("/api/agent/tasks").json()["data"]
+    )
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT user_id, model_name FROM agent_config ORDER BY user_id"
+        ).fetchall()
+    assert rows == [(1, "test-model"), (2, "alice-model")]
+
+
+def test_legacy_global_agent_config_migrates_to_admin(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            INSERT INTO users VALUES (7, 'admin', 'unused', 'admin', '2026-01-01');
+            CREATE TABLE agent_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                provider_url TEXT NOT NULL, model_name TEXT NOT NULL,
+                encrypted_api_key TEXT NOT NULL, input_price TEXT NOT NULL,
+                output_price TEXT NOT NULL, currency TEXT NOT NULL,
+                request_timeout REAL NOT NULL, max_iterations INTEGER NOT NULL,
+                max_output_tokens INTEGER NOT NULL, updated_at TEXT NOT NULL
+            );
+            INSERT INTO agent_config VALUES
+                (1, 'https://model.example/v1', 'legacy-model', 'ciphertext',
+                 '0', '0', 'USD', 60, 3, 4096, '2026-01-01');
+            """
+        )
+    settings = Settings(
+        database_path=database,
+        problems_path=tmp_path / "problems",
+        environment="test",
+        credential_encryption_key=Fernet.generate_key().decode(),
+    )
+    with TestClient(create_app(settings)):
+        pass
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(agent_config)").fetchall()
+        }
+        row = connection.execute(
+            "SELECT user_id, model_name FROM agent_config"
+        ).fetchone()
+    assert "user_id" in columns and "id" not in columns
+    assert row == (7, "legacy-model")
 
 
 def test_import_requires_success_and_manual_confirmation(agent_client) -> None:

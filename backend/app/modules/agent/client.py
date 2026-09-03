@@ -64,8 +64,8 @@ class OpenAICompatibleClient:
         self.cipher = cipher
         self.transport = transport
 
-    async def configuration(self) -> ModelConfiguration:
-        row = await self.repository.get_config_row()
+    async def configuration(self, user_id: int) -> ModelConfiguration:
+        row = await self.repository.get_config_row(user_id)
         if row is None:
             raise ModelClientError("model_not_configured", "Model configuration is missing")
         try:
@@ -84,8 +84,8 @@ class OpenAICompatibleClient:
             max_output_tokens=int(row["max_output_tokens"]),
         )
 
-    async def complete(self, messages: list[dict[str, str]]) -> ModelResult:
-        config = await self.configuration()
+    async def complete(self, user_id: int, messages: list[dict[str, str]]) -> ModelResult:
+        config = await self.configuration(user_id)
         url = config.provider_url
         if not url.endswith("/chat/completions"):
             url = f"{url}/chat/completions"
@@ -143,8 +143,9 @@ class OpenAICompatibleClient:
         cost = _cost(input_tokens, output_tokens, config)
         return ModelResult(content, input_tokens, output_tokens, estimated, cost)
 
-    async def test_connection(self) -> ModelResult:
+    async def test_connection(self, user_id: int) -> ModelResult:
         return await self.complete(
+            user_id,
             [
                 {"role": "system", "content": "Return JSON only."},
                 {"role": "user", "content": 'Return exactly {"ok":true}.'},

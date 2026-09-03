@@ -1,4 +1,4 @@
-"""Administrator-only AI authoring API."""
+"""Authenticated, owner-isolated AI authoring API."""
 
 from decimal import Decimal
 from typing import Annotated, Any
@@ -25,7 +25,7 @@ from backend.app.modules.problems.service import (
     ProblemNotFoundError,
     ProblemService,
 )
-from backend.app.modules.users.dependencies import require_admin
+from backend.app.modules.users.dependencies import require_login
 from backend.app.modules.users.models import User
 
 router = APIRouter()
@@ -65,10 +65,10 @@ async def _owned_task(repository: AgentRepository, task_id: str, user_id: int):
 @router.get("/config", response_model=ApiResponse)
 async def get_config(
     request: Request,
-    _: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
 ) -> ApiResponse:
-    row = await repository.get_config_row()
+    row = await repository.get_config_row(current_user.id)
     configured = request.app.state.agent_cipher.configured
     if row is None:
         return ApiResponse(data={"configured": False, "encryption_configured": configured})
@@ -92,7 +92,7 @@ async def get_config(
 async def save_config(
     payload: AgentConfigUpdate,
     request: Request,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
     audit: Annotated[AuditService, Depends(get_audit_service)],
 ) -> ApiResponse:
@@ -101,14 +101,14 @@ async def save_config(
             payload.provider_url, request.app.state.settings.agent_allow_local_http
         )
         cipher: CredentialCipher = request.app.state.agent_cipher
-        row = await repository.get_config_row()
+        row = await repository.get_config_row(current_user.id)
         if payload.api_key is not None:
             encrypted = cipher.encrypt(payload.api_key)
         elif row is not None:
             encrypted = row["encrypted_api_key"]
         else:
             raise ValueError("api_key is required for initial configuration")
-        await repository.save_config(payload, encrypted)
+        await repository.save_config(current_user.id, payload, encrypted)
     except CredentialUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -117,7 +117,7 @@ async def save_config(
         actor_user_id=current_user.id,
         action="update_agent_config",
         target_type="agent_config",
-        target_id="1",
+        target_id=str(current_user.id),
         success=True,
         status=200,
         changes={"model_name": payload.model_name, "provider_url": payload.provider_url},
@@ -127,11 +127,11 @@ async def save_config(
 
 @router.post("/config/test", response_model=ApiResponse)
 async def test_config(
-    _: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     client: Annotated[OpenAICompatibleClient, Depends(get_model_client)],
 ) -> ApiResponse:
     try:
-        result = await client.test_connection()
+        result = await client.test_connection(current_user.id)
     except ModelClientError as exc:
         raise HTTPException(status_code=502, detail=exc.safe_message) from exc
     return ApiResponse(data={"connected": bool(result.content.get("ok", True))})
@@ -140,7 +140,7 @@ async def test_config(
 @router.post("/tasks", response_model=ApiResponse)
 async def create_task(
     payload: AuthoringRequest,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
@@ -154,7 +154,7 @@ async def create_task(
 
 @router.get("/tasks", response_model=ApiResponse)
 async def list_tasks(
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
 ) -> ApiResponse:
     tasks = await repository.list_tasks(current_user.id)
@@ -164,7 +164,7 @@ async def list_tasks(
 @router.get("/tasks/{task_id}", response_model=ApiResponse)
 async def get_task(
     task_id: str,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
 ) -> ApiResponse:
     return ApiResponse(data=_task_data(await _owned_task(repository, task_id, current_user.id)))
@@ -173,7 +173,7 @@ async def get_task(
 @router.get("/tasks/{task_id}/events", response_model=ApiResponse)
 async def get_events(
     task_id: str,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
     after_id: Annotated[int, Query(ge=0)] = 0,
 ) -> ApiResponse:
@@ -185,7 +185,7 @@ async def get_events(
 @router.post("/tasks/{task_id}/cancel", response_model=ApiResponse)
 async def cancel_task(
     task_id: str,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
@@ -199,7 +199,7 @@ async def cancel_task(
 async def refine_task(
     task_id: str,
     payload: RefineRequest,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
@@ -215,7 +215,7 @@ async def refine_task(
 async def import_task(
     task_id: str,
     payload: ImportRequest,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
     problem_service: Annotated[ProblemService, Depends(get_problem_service)],
     audit: Annotated[AuditService, Depends(get_audit_service)],

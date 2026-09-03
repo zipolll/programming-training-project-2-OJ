@@ -108,13 +108,13 @@ def navigation_for(role: str | None) -> list[str]:
         "首页",
         "题目列表",
         "题目管理",
+        "AI 智能命题",
         "提交代码",
         "提交记录",
         "个人信息",
         "退出",
     ]
     if role == "admin":
-        pages.insert(-1, "AI 智能命题")
         pages.insert(-2, "用户管理")
         pages.insert(-2, "日志可见性")
     return pages

@@ -6,7 +6,7 @@ from typing import Any
 import streamlit as st
 
 from frontend.api_client import ApiClient
-from frontend.components.common import show_error
+from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
 from frontend.components.ui import (
     badges,
     empty_state,
@@ -41,9 +41,17 @@ def _config(api: ApiClient) -> None:
     ]
     badges(config_badges)
     with st.form("agent-config"):
-        provider_url = st.text_input("Provider URL", current.get("provider_url", ""))
-        model_name = st.text_input("模型名称", current.get("model_name", ""))
-        api_key = st.text_input("API Key（留空则保留）", type="password")
+        provider_url = st.text_input(
+            "Provider URL",
+            current.get("provider_url", ""),
+            placeholder=REQUIRED_PLACEHOLDER,
+        )
+        model_name = st.text_input(
+            "模型名称", current.get("model_name", ""), placeholder=REQUIRED_PLACEHOLDER
+        )
+        api_key = st.text_input(
+            "API Key（留空则保留）", type="password", placeholder=OPTIONAL_PLACEHOLDER
+        )
         section_header("Token 价格", icon="💳")
         left, right = st.columns(2)
         input_price = left.number_input(
@@ -128,25 +136,31 @@ def _authoring_form(api: ApiClient) -> None:
         problems = []
     with st.form("agent-authoring"):
         section_header("核心目标", icon="🎯")
-        knowledge = st.text_input("必须覆盖的知识点（逗号分隔）")
+        knowledge = st.text_input(
+            "必须覆盖的知识点（逗号分隔）", placeholder=REQUIRED_PLACEHOLDER
+        )
         difficulty = st.selectbox("目标难度", ["入门", "简单", "中等", "困难"])
-        problem_type = st.text_input("题目类型", "算法题")
+        problem_type = st.text_input(
+            "题目类型", "算法题", placeholder=REQUIRED_PLACEHOLDER
+        )
         section_header("算法约束", icon="🧠")
-        algorithm = st.text_input("期望算法或复杂度")
-        forbidden = st.text_input("禁止知识点（逗号分隔）")
-        scale = st.text_input("数据规模")
+        algorithm = st.text_input("期望算法或复杂度", placeholder=REQUIRED_PLACEHOLDER)
+        forbidden = st.text_input(
+            "禁止知识点（逗号分隔）", placeholder=OPTIONAL_PLACEHOLDER
+        )
+        scale = st.text_input("数据规模", placeholder=REQUIRED_PLACEHOLDER)
         section_header("评测资源", icon="⏱️")
         left, right = st.columns(2)
         time_limit = left.number_input("时间限制（秒）", 0.1, 60.0, 2.0)
         memory_limit = right.number_input("内存限制（MB）", 16, 4096, 128)
         testcase_count = st.number_input("测试点数量", 1, 100, 10)
         section_header("背景与改编", icon="🎨")
-        background = st.text_input("背景偏好")
+        background = st.text_input("背景偏好", placeholder=OPTIONAL_PLACEHOLDER)
         adapt = st.checkbox("基于已有题目改编")
         options = [""] + [item["id"] for item in problems]
         existing = st.selectbox("已有题目", options, disabled=not adapt)
         section_header("补充要求", icon="📝")
-        additional = st.text_area("补充要求")
+        additional = st.text_area("补充要求", placeholder=OPTIONAL_PLACEHOLDER)
         submitted = st.form_submit_button("创建命题任务")
     if submitted:
         form_errors = []
@@ -227,7 +241,11 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
         with st.expander("验证报告", expanded=True):
             st.json(task["validation_report"])
     if task["status"] == "success":
-        feedback = st.text_area("继续修改", key=f"feedback-{task['task_id']}")
+        feedback = st.text_area(
+            "继续修改",
+            key=f"feedback-{task['task_id']}",
+            placeholder=REQUIRED_PLACEHOLDER,
+        )
         if st.button("创建新 revision") and feedback:
             try:
                 result = api.post(

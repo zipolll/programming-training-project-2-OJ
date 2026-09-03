@@ -42,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         problem_service = ProblemService(ProblemRepository(resolved_settings.problems_path))
         language_service = LanguageService(LanguageRepository(database))
         await auth_service.ensure_initial_admin()
+        await database.migrate_agent_config()
         await problem_service.initialize()
         await language_service.initialize()
         application.state.database = database

@@ -157,7 +157,7 @@ python -m streamlit run frontend/app.py
 
 页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
 新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、日志
-可见性管理，以及管理员专用的 AI Agent 智能命题工作台。
+可见性管理，以及登录用户可用的 AI Agent 智能命题工作台。
 
 所有业务数据均通过 FastAPI 接口读取和修改。登录后的 API Session Cookie 只在
 Streamlit 服务端内存客户端中使用；浏览器另持有 FastAPI 设置的 `HttpOnly`、
@@ -184,7 +184,8 @@ Submission 详情在 `pending` 时使用 Streamlit fragment 每秒查询一次�
 
 ## AI Agent 智能命题（Advance R1–R4）
 
-AI 页面只对后端 Session 判定的管理员开放。先生成 Fernet 主密钥并通过环境变量
+AI 页面向所有已登录用户开放。每位用户拥有独立的模型配置、加密 API Key 和命题
+任务，不能查看或操作其他用户的数据。先生成 Fernet 主密钥并通过环境变量
 `OJ_CREDENTIAL_ENCRYPTION_KEY` 提供；主密钥不进入数据库或 Git：
 
 ```bash
@@ -198,14 +199,14 @@ Token 单价、币种、超时、最大修正轮数和最大输出 Token。API K
 必须为 HTTPS；开发模式仅允许 localhost/loopback 使用 HTTP，拒绝 URL 凭据、元数据
 地址、query 和 fragment。模型请求不记录 Authorization Header，也不自动重定向。
 
-管理员 API 均为异步接口，沿用 `{code,msg,data}` 响应：
+AI API 均要求登录，任务按当前用户隔离，并沿用 `{code,msg,data}` 响应：
 
 - `GET /api/agent/config`：返回脱敏配置与加密可用状态。
 - `PUT /api/agent/config`：保存配置；`api_key` 留空表示保留已加密值。
 - `POST /api/agent/config/test`：发起最小结构化连接测试。
 - `POST /api/agent/tasks`：提交知识点、难度、题型、算法、禁用知识、数据规模、资源
   限制、背景、测试点数、补充要求和可选 `existing_problem_id`，立即返回 `pending`。
-- `GET /api/agent/tasks` 与 `GET /api/agent/tasks/{task_id}`：查询当前管理员自己的
+- `GET /api/agent/tasks` 与 `GET /api/agent/tasks/{task_id}`：查询当前用户自己的
   任务、结果、验证报告和本轮用量。
 - `GET /api/agent/tasks/{task_id}/events?after_id=N`：最多返回 200 条增量事件。
 - `POST /api/agent/tasks/{task_id}/cancel`：设置持久化取消标记，并取消当前模型请求或

@@ -31,18 +31,22 @@ class AgentRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    async def get_config_row(self) -> dict[str, Any] | None:
+    async def get_config_row(self, user_id: int) -> dict[str, Any] | None:
         async with self.database.connect() as connection:
-            cursor = await connection.execute("SELECT * FROM agent_config WHERE id = 1")
+            cursor = await connection.execute(
+                "SELECT * FROM agent_config WHERE user_id = ?", (user_id,)
+            )
             row = await cursor.fetchone()
         return dict(row) if row else None
 
-    async def save_config(self, config: AgentConfigUpdate, encrypted_api_key: str) -> None:
+    async def save_config(
+        self, user_id: int, config: AgentConfigUpdate, encrypted_api_key: str
+    ) -> None:
         async with self.database.connect() as connection:
             await connection.execute(
                 """
-                INSERT INTO agent_config VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
+                INSERT INTO agent_config VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
                     provider_url=excluded.provider_url, model_name=excluded.model_name,
                     encrypted_api_key=excluded.encrypted_api_key,
                     input_price=excluded.input_price, output_price=excluded.output_price,
@@ -51,6 +55,7 @@ class AgentRepository:
                     max_output_tokens=excluded.max_output_tokens, updated_at=excluded.updated_at
                 """,
                 (
+                    user_id,
                     config.provider_url,
                     config.model_name,
                     encrypted_api_key,

@@ -34,6 +34,7 @@ from frontend.models import (
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
 from frontend.session import (
+    auth_resolution_pending,
     browser_bridge_base_url,
     clear_auth,
     current_user,
@@ -326,6 +327,26 @@ def test_browser_bridge_uses_same_loopback_hostname(
     assert browser_bridge_base_url(api_url, browser_host) == expected
 
 
+def test_initial_browser_auth_resolution_hides_anonymous_navigation() -> None:
+    client = ApiClient(
+        "http://auth-gate-test/api", transport=httpx.MockTransport(lambda _: envelope())
+    )
+
+    assert auth_resolution_pending(client, {}) is True
+    assert auth_resolution_pending(client, {"auth_bridge_attempted": True}) is False
+    assert (
+        auth_resolution_pending(
+            client,
+            {"auth_bridge_action": "clear", "auth_bridge_attempted": False},
+        )
+        is False
+    )
+
+    client._client.cookies.set("session_id", "server-only")
+    assert auth_resolution_pending(client, {}) is False
+    assert auth_resolution_pending(client, {"auth_user": {"id": 1}}) is False
+
+
 def test_reference_resources_are_requested_once_across_page_navigation() -> None:
     calls: list[str] = []
 
@@ -477,6 +498,7 @@ def test_navigation_is_role_aware() -> None:
     assert "登录" in anonymous and "提交代码" not in anonymous
     assert "题目列表" not in anonymous
     assert "提交代码" in regular and "用户管理" not in regular
+    assert "AI 智能命题" in regular
     assert {"用户管理", "日志可见性"} <= set(admin)
 
 
@@ -494,6 +516,7 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
         "概览": ["首页"],
         "账户": ["注册", "登录"],
     }
+    assert navigation_sections("user")["题目"][-1] == "AI 智能命题"
     assert navigation_sections("user")["评测"] == ["提交代码", "提交记录"]
     assert navigation_sections("admin")["题目"][-1] == "AI 智能命题"
     assert navigation_sections("admin")["评测"][-1] == "日志可见性"
@@ -506,6 +529,7 @@ def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatc
 
     calls: list[str] = []
     transitions: list[str] = []
+    headers: list[str] = []
     inputs = iter(["alice", "secret1"])
     monkeypatch.setattr(auth_page.st, "title", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page.st, "form", lambda *_args, **_kwargs: nullcontext())
@@ -514,6 +538,11 @@ def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(auth_page.st, "success", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page.st, "warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page.st, "button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        auth_page,
+        "page_header",
+        lambda title, *_args, **_kwargs: headers.append(title),
+    )
     monkeypatch.setattr(auth_page, "restore_identity", lambda _api: {"id": 1, "role": "user"})
     monkeypatch.setattr(auth_page, "prepare_browser_bridge", lambda _api: None)
     monkeypatch.setattr(auth_page, "set_auth_user", lambda _user: None)
@@ -529,6 +558,7 @@ def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatc
 
     assert calls == ["/auth/login", "/auth/logout"]
     assert transitions == ["login-home", "cleared", "logout-home"]
+    assert headers[:2] == ["欢迎回来", "正在登录"]
 
 
 def test_registration_logs_in_and_uses_navigation_callback(
@@ -662,6 +692,8 @@ def test_visual_theme_has_required_tokens_and_accessibility_rules() -> None:
     assert "background: transparent !important" in normalized
     assert "border-left: 4px solid var(--oj-primary)" not in normalized
     assert '[data-testid="stheaderactionelements"]' in normalized
+    assert "input::placeholder" in normalized
+    assert "font-style: italic" in normalized
 
 
 def test_visual_components_escape_dynamic_html(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -725,7 +757,14 @@ def test_status_badges_use_distinct_accessible_classes(
 def test_streamlit_application_smoke() -> None:
     testing = pytest.importorskip("streamlit.testing.v1")
     app_path = Path(__file__).parents[1] / "frontend" / "app.py"
-    app = testing.AppTest.from_file(app_path, default_timeout=10).run()
+    loading_app = testing.AppTest.from_file(app_path, default_timeout=10).run()
+    assert not loading_app.exception
+    assert any("正在载入" in item.value for item in loading_app.markdown)
+    assert not any("当前状态：未登录" in item.value for item in loading_app.caption)
+
+    app = testing.AppTest.from_file(app_path, default_timeout=10)
+    app.session_state["auth_bridge_attempted"] = True
+    app.run()
     assert not app.exception
     assert any("Programming Training OJ" in item.value for item in app.markdown)
     assert any("oj-feature-grid" in item.value for item in app.markdown)

@@ -90,7 +90,7 @@ class AgentTaskManager:
                 await self.problem_service.get_problem(request.existing_problem_id)
             except (ProblemNotFoundError, ValueError) as exc:
                 raise ValueError("existing problem does not exist") from exc
-        config = await self.model_client.configuration()
+        config = await self.model_client.configuration(user_id)
         task_id = str(uuid4())
         await self.repository.create_task(task_id, user_id, request, currency=config.currency)
         await self.repository.add_event(task_id, "queued", "status", "Task queued", 0)
@@ -108,7 +108,7 @@ class AgentTaskManager:
                 ).strip()
             }
         )
-        config = await self.model_client.configuration()
+        config = await self.model_client.configuration(user_id)
         task_id = str(uuid4())
         await self.repository.create_task(
             task_id,
@@ -211,13 +211,15 @@ class AgentTaskManager:
                 12,
                 f"Retrieved {len(context)} bounded local problem summaries",
             )
-            generated = await self._generate(task_id, task.request, context, None, None)
+            generated = await self._generate(
+                task.user_id, task_id, task.request, context, None, None
+            )
             await self.repository.update_task(task_id, draft_json=generated)
             await self._stage(task_id, "design_problem", 22, "Problem structure generated")
             await self._stage(task_id, "generate_solution", 32, "Reference solution generated")
             await self._stage(task_id, "generate_testcases", 42, "Testcases generated")
 
-            config = await self.model_client.configuration()
+            config = await self.model_client.configuration(task.user_id)
             report: ValidationReport | None = None
             for iteration in range(config.max_iterations):
                 self._check(cancelled)
@@ -255,7 +257,9 @@ class AgentTaskManager:
                     90,
                     f"Revision {iteration + 1}: repairing validation failures",
                 )
-                generated = await self._generate(task_id, task.request, context, generated, report)
+                generated = await self._generate(
+                    task.user_id, task_id, task.request, context, generated, report
+                )
                 await self.repository.update_task(task_id, draft_json=generated)
             assert report is not None
             self._check(cancelled)
@@ -280,6 +284,7 @@ class AgentTaskManager:
 
     async def _generate(
         self,
+        user_id: int,
         task_id: str,
         request: AuthoringRequest,
         context: list[dict[str, Any]],
@@ -315,7 +320,7 @@ class AgentTaskManager:
         last_error: ValidationError | None = None
         for repair in range(2):
             try:
-                result = await self.model_client.complete(messages)
+                result = await self.model_client.complete(user_id, messages)
             except ModelClientError as exc:
                 if exc.input_tokens or exc.output_tokens:
                     await self.repository.add_usage(

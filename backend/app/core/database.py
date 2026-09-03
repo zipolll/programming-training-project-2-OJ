@@ -123,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created
 ON audit_logs(action, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS agent_config (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     provider_url TEXT NOT NULL,
     model_name TEXT NOT NULL,
     encrypted_api_key TEXT NOT NULL,
@@ -207,6 +207,54 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with self.connect() as connection:
             await connection.executescript(SCHEMA)
+            await connection.commit()
+
+    async def migrate_agent_config(self) -> None:
+        """Move the legacy global AI configuration to the initial administrator."""
+        async with self.connect() as connection:
+            cursor = await connection.execute("PRAGMA table_info(agent_config)")
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            if not columns or "user_id" in columns:
+                return
+            admin = await (
+                await connection.execute(
+                    "SELECT id FROM users WHERE username = 'admin' ORDER BY id LIMIT 1"
+                )
+            ).fetchone()
+            if admin is None:
+                raise RuntimeError("Initial administrator is required for AI config migration")
+            await connection.execute("ALTER TABLE agent_config RENAME TO agent_config_legacy")
+            await connection.execute(
+                """
+                CREATE TABLE agent_config (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    provider_url TEXT NOT NULL,
+                    model_name TEXT NOT NULL,
+                    encrypted_api_key TEXT NOT NULL,
+                    input_price TEXT NOT NULL,
+                    output_price TEXT NOT NULL,
+                    currency TEXT NOT NULL,
+                    request_timeout REAL NOT NULL,
+                    max_iterations INTEGER NOT NULL,
+                    max_output_tokens INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            await connection.execute(
+                """
+                INSERT INTO agent_config
+                (user_id, provider_url, model_name, encrypted_api_key, input_price,
+                 output_price, currency, request_timeout, max_iterations,
+                 max_output_tokens, updated_at)
+                SELECT ?, provider_url, model_name, encrypted_api_key, input_price,
+                       output_price, currency, request_timeout, max_iterations,
+                       max_output_tokens, updated_at
+                FROM agent_config_legacy WHERE id = 1
+                """,
+                (int(admin[0]),),
+            )
+            await connection.execute("DROP TABLE agent_config_legacy")
             await connection.commit()
 
     @asynccontextmanager
