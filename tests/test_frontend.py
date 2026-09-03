@@ -12,6 +12,7 @@ import pytest
 
 from frontend.api_client import ApiClient
 from frontend.components import ui
+from frontend.components.pagination import page_count
 from frontend.components.theme import GLOBAL_CSS
 from frontend.data_access import (
     load_language_names,
@@ -383,6 +384,28 @@ def test_reference_resources_are_requested_once_across_page_navigation() -> None
     assert calls.count("/api/languages/") == 1
 
 
+@pytest.mark.parametrize(
+    ("total", "page_size", "expected"),
+    [(0, 10, 1), (1, 10, 1), (10, 10, 1), (11, 10, 2), (101, 50, 3)],
+)
+def test_compact_pagination_page_count(
+    total: int, page_size: int, expected: int
+) -> None:
+    assert page_count(total, page_size) == expected
+
+
+def test_paginated_pages_share_compact_table_footer() -> None:
+    frontend = Path(__file__).parents[1] / "frontend"
+    auth_source = (frontend / "pages" / "auth.py").read_text(encoding="utf-8")
+    submission_source = (frontend / "pages" / "submissions.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'render_pagination("user_admin", total=total)' in auth_source
+    assert 'render_pagination("submission_list", total=' in submission_source
+    assert 'number_input("页码"' not in auth_source + submission_source
+
+
 def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
     rendered: list[str] = []
     monkeypatch.setattr(agent_page, "page_header", lambda *_args, **_kwargs: None)
@@ -734,6 +757,21 @@ def test_agent_currency_uses_common_and_custom_options() -> None:
     assert agent_page.COMMON_CURRENCIES == ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
     source = Path(agent_page.__file__).read_text(encoding="utf-8")
     assert "accept_new_options=True" in source
+
+
+def test_agent_problem_type_uses_common_and_custom_options() -> None:
+    assert agent_page.PROBLEM_TYPES == [
+        "基础编程",
+        "算法设计",
+        "数据结构",
+        "数学",
+        "字符串",
+        "图论",
+        "动态规划",
+    ]
+    source = Path(agent_page.__file__).read_text(encoding="utf-8")
+    assert 'with st.expander("高级设置（选填）")' in source
+    assert '"期望算法或复杂度",\n                placeholder=OPTIONAL_PLACEHOLDER' in source
 
 
 def test_status_badges_use_distinct_accessible_classes(

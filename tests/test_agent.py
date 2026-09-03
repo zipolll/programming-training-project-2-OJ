@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.core.config import Settings
 from backend.app.main import create_app
-from backend.app.modules.agent.models import validate_provider_url
+from backend.app.modules.agent.models import AuthoringRequest, validate_provider_url
 
 FAKE_KEY = "test-provider-key-never-real"
 
@@ -117,6 +117,37 @@ def authoring_payload() -> dict[str, Any]:
         "adapt_existing": False,
         "existing_problem_id": None,
     }
+
+
+@pytest.mark.parametrize("problem_type", ["数学", "自定义专题题"])
+def test_minimal_authoring_request_allows_ai_selected_advanced_fields(
+    problem_type: str,
+) -> None:
+    request = AuthoringRequest.model_validate(
+        {
+            "required_knowledge": ["前缀和"],
+            "difficulty": "中等",
+            "problem_type": problem_type,
+        }
+    )
+
+    assert request.problem_type == problem_type
+    assert request.expected_algorithm == ""
+    assert request.data_scale == ""
+    assert request.time_limit == 2.0
+    assert request.memory_limit == 128
+    assert request.testcase_count == 10
+
+
+def test_minimal_authoring_request_still_requires_core_knowledge() -> None:
+    with pytest.raises(ValueError):
+        AuthoringRequest.model_validate(
+            {
+                "required_knowledge": [],
+                "difficulty": "中等",
+                "problem_type": "算法设计",
+            }
+        )
 
 
 def wait_terminal(client: TestClient, task_id: str) -> dict[str, Any]:
