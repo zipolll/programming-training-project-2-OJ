@@ -164,6 +164,7 @@ def test_role_changes_ban_sessions_and_preserve_last_admin(
     changed = client.put(f"/api/users/{alice_id}/role", json={"role": "banned"})
     assert changed.status_code == 200
 
+    client.cookies.clear()
     client.cookies.set("session_id", alice_session)
     assert client.get("/api/problems/").status_code == 401
     assert client.post(
