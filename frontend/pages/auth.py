@@ -6,6 +6,7 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import REQUIRED_PLACEHOLDER, show_error
+from frontend.components.pagination import pagination_values, render_pagination
 from frontend.components.ui import badges, info_card, page_header, section_header
 from frontend.errors import ApiError
 from frontend.models import validate_login, validate_registration
@@ -180,8 +181,7 @@ def render_user_admin(api: ApiClient) -> None:
         eyebrow="ADMIN CONTROL",
     )
     section_header("选手列表", icon="👥")
-    page_size = int(st.session_state.get("user_admin_page_size", 10))
-    page = int(st.session_state.get("user_admin_page", 1))
+    page, page_size = pagination_values("user_admin")
     try:
         with st.spinner("正在加载用户..."):
             result = api.get("/users/", params={"page": page, "page_size": page_size})[
@@ -192,13 +192,10 @@ def render_user_admin(api: ApiClient) -> None:
         return
     users = result.get("users", [])
     total = int(result.get("total", 0))
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    if page > total_pages:
-        st.session_state.user_admin_page = total_pages
-        st.rerun()
     st.caption(f"共 {total} 位用户")
     if not users:
         st.info("当前页没有用户。")
+        render_pagination("user_admin", total=total)
         return
     role_labels = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
     display_users = [
@@ -227,28 +224,7 @@ def render_user_admin(api: ApiClient) -> None:
         },
     )
 
-    def reset_page() -> None:
-        st.session_state.user_admin_page = 1
-
-    controls = st.columns([2.2, 1, 1.2, 1])
-    controls[0].selectbox(
-        "每页数量",
-        [10, 20, 50],
-        key="user_admin_page_size",
-        on_change=reset_page,
-    )
-    if controls[1].button("上一页", disabled=page <= 1, use_container_width=True):
-        st.session_state.user_admin_page = page - 1
-        st.rerun()
-    controls[2].markdown(
-        f"<div class='oj-page-number'>第 {page} / {total_pages} 页</div>",
-        unsafe_allow_html=True,
-    )
-    if controls[3].button(
-        "下一页", disabled=page >= total_pages, use_container_width=True
-    ):
-        st.session_state.user_admin_page = page + 1
-        st.rerun()
+    render_pagination("user_admin", total=total)
     section_header("角色调整", icon="⚠️")
     target = st.selectbox(
         "选择用户",

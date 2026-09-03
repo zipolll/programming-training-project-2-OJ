@@ -332,12 +332,28 @@ a.anchor-link {
   font-weight: 800;
 }
 .oj-page-number {
-  padding-top: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
   color: var(--oj-muted);
   text-align: center;
   font-size: .86rem;
   font-weight: 750;
   white-space: nowrap;
+}
+[class*="_pagination"] [data-testid="stHorizontalBlock"] {
+  align-items: center;
+  gap: .7rem;
+}
+[class*="_pagination"] [data-testid="stSelectbox"],
+[class*="_pagination"] [data-testid="stButton"],
+[class*="_pagination"] [data-testid="stMarkdownContainer"] {
+  margin: 0;
+}
+[class*="_pagination"] [data-baseweb="select"] > div,
+[class*="_pagination"] button {
+  min-height: 2.5rem;
 }
 [data-testid="stAlert"] { border-radius: 13px; }
 code, pre { font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace !important; }

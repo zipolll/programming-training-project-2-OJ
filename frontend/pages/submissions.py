@@ -11,6 +11,11 @@ from frontend.components.common import (
     render_status,
     show_error,
 )
+from frontend.components.pagination import (
+    pagination_values,
+    render_pagination,
+    reset_pagination,
+)
 from frontend.components.ui import badges, empty_state, page_header, section_header
 from frontend.data_access import load_submission_options
 from frontend.errors import NetworkError
@@ -176,17 +181,32 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
         eyebrow="SUBMISSION HISTORY",
     )
     section_header("筛选条件", icon="🔎")
+
+    def filters_changed() -> None:
+        reset_pagination("submission_list")
+
     left, middle, right = st.columns(3)
-    problem_id = left.text_input("题目 ID 筛选", placeholder=OPTIONAL_PLACEHOLDER)
-    status = middle.selectbox("状态筛选", ["全部", "pending", "success", "error"])
+    problem_id = left.text_input(
+        "题目 ID 筛选",
+        placeholder=OPTIONAL_PLACEHOLDER,
+        key="submission_problem_filter",
+        on_change=filters_changed,
+    )
+    status = middle.selectbox(
+        "状态筛选",
+        ["全部", "pending", "success", "error"],
+        key="submission_status_filter",
+        on_change=filters_changed,
+    )
     user_id = right.text_input(
         "用户 ID 筛选",
         value="" if is_admin else str(user["id"]),
         disabled=not is_admin,
         placeholder=OPTIONAL_PLACEHOLDER,
+        key=f"submission_user_filter_{'admin' if is_admin else user['id']}",
+        on_change=filters_changed,
     )
-    page_size = st.selectbox("每页数量", [10, 20, 50])
-    page = int(st.number_input("页码", min_value=1, value=1))
+    page, page_size = pagination_values("submission_list")
     params: dict[str, Any] = {"page": page, "page_size": page_size}
     if problem_id.strip():
         params["problem_id"] = problem_id.strip()
@@ -209,6 +229,7 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
     submissions = data.get("submissions", [])
     if not submissions:
         empty_state("没有符合条件的提交。", icon="📭")
+        render_pagination("submission_list", total=int(data.get("total", 0)))
         return
     badges([(f"共 {data.get('total', 0)} 条", "cyan"), (f"第 {page} 页", "orange")])
     rows = [
@@ -221,6 +242,7 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
         for item in submissions
     ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
+    render_pagination("submission_list", total=int(data.get("total", 0)))
     selected = st.selectbox("查看详情", [item["submission_id"] for item in submissions])
     st.session_state["selected_submission_id"] = selected
     render_submission_detail(api, selected, is_admin)
