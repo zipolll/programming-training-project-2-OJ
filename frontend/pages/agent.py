@@ -1,5 +1,6 @@
 """Streamlit AI problem-authoring workflow."""
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import streamlit as st
@@ -14,6 +15,7 @@ from frontend.components.ui import (
     status_badge,
     timeline_event,
 )
+from frontend.data_access import invalidate_problem_cache, load_problem_summaries
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
@@ -121,7 +123,7 @@ def _config(api: ApiClient) -> None:
 def _authoring_form(api: ApiClient) -> None:
     section_header("命题任务", icon="✨")
     try:
-        problems = api.get("/problems/")["data"]
+        problems = load_problem_summaries(api.base_url, api)
     except Exception:
         problems = []
     with st.form("agent-authoring"):
@@ -247,6 +249,7 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
             except Exception as exc:
                 show_error(exc)
             else:
+                invalidate_problem_cache()
                 st.success(f"已导入题目 {result['problem_id']}。")
 
 
@@ -286,11 +289,15 @@ def _task_monitor(api: ApiClient) -> None:
     @st.fragment(run_every=interval)
     def poll() -> None:
         try:
-            task = api.get(f"/agent/tasks/{selected}")["data"]
-            events = api.get(
-                f"/agent/tasks/{selected}/events",
-                params={"after_id": st.session_state.get("agent_after_id", 0)},
-            )["data"]
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-monitor") as pool:
+                task_future = pool.submit(api.get, f"/agent/tasks/{selected}")
+                events_future = pool.submit(
+                    api.get,
+                    f"/agent/tasks/{selected}/events",
+                    params={"after_id": st.session_state.get("agent_after_id", 0)},
+                )
+                task = task_future.result()["data"]
+                events = events_future.result()["data"]
         except Exception as exc:
             st.session_state[pause_key] = True
             st.session_state.agent_poll_error = str(exc)
@@ -328,10 +335,16 @@ def render_agent(api: ApiClient) -> None:
         variant="ai",
     )
     badges([("受控本地工具", "cyan"), ("多轮验证", "orange"), ("人工确认导入", "green")])
-    config_tab, author_tab, task_tab = st.tabs(["模型配置", "创建任务", "进度与结果"])
-    with config_tab:
+    selected_view = st.segmented_control(
+        "功能",
+        ["模型配置", "创建任务", "进度与结果"],
+        default="模型配置",
+        label_visibility="collapsed",
+        key="agent_active_view",
+    )
+    if selected_view == "模型配置":
         _config(api)
-    with author_tab:
+    elif selected_view == "创建任务":
         _authoring_form(api)
-    with task_tab:
+    else:
         _task_monitor(api)

@@ -13,6 +13,11 @@ import pytest
 from frontend.api_client import ApiClient
 from frontend.components import ui
 from frontend.components.theme import GLOBAL_CSS
+from frontend.data_access import (
+    load_language_names,
+    load_problem_summaries,
+    load_submission_options,
+)
 from frontend.errors import ApiError, NetworkError, ProtocolError
 from frontend.models import (
     NAVIGATION_LAYOUT,
@@ -271,6 +276,83 @@ def test_new_streamlit_session_does_not_share_server_side_cookie_jar() -> None:
 
     logout_local(first, first_state)
     logout_local(refreshed, refreshed_state)
+
+
+def test_confirmed_identity_skips_bridge_and_users_me_on_ordinary_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return envelope(data={})
+
+    state: dict[str, Any] = {"auth_user": {"id": 1, "role": "user"}}
+    client = ApiClient("http://identity-test/api", transport=httpx.MockTransport(handler))
+    client._client.cookies.set("session_id", "server-only")
+    monkeypatch.setattr(
+        "frontend.session.mount_auth_bridge",
+        lambda **_: pytest.fail("confirmed sessions must not rebuild the browser bridge"),
+    )
+
+    assert sync_browser_auth(client, state) == {"id": 1, "role": "user"}
+    assert requests == []
+
+
+def test_reference_resources_are_requested_once_across_page_navigation() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/problems/"):
+            return envelope(
+                data=[
+                    {
+                        "id": "P1",
+                        "title": "Sum",
+                        "difficulty": "easy",
+                        "tags": ["math"],
+                        "source": "course",
+                        "author": "teacher",
+                        "testcases": [{"input": "secret", "output": "secret"}],
+                    }
+                ]
+            )
+        return envelope(data={"name": ["python", "cpp"]})
+
+    load_problem_summaries.clear()
+    load_language_names.clear()
+    client = ApiClient("http://reference-cache-test/api", transport=httpx.MockTransport(handler))
+
+    problem_page_data = load_problem_summaries(client.base_url, client)
+    first_submit_options = load_submission_options(client)
+    second_submit_options = load_submission_options(client)
+
+    assert problem_page_data == first_submit_options[0] == second_submit_options[0]
+    assert "testcases" not in problem_page_data[0]
+    assert first_submit_options[1] == second_submit_options[1] == ["python", "cpp"]
+    assert calls.count("/api/problems/") == 1
+    assert calls.count("/api/languages/") == 1
+
+
+def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(agent_page, "page_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_page, "badges", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        agent_page.st,
+        "segmented_control",
+        lambda *_args, **_kwargs: "创建任务",
+    )
+    monkeypatch.setattr(agent_page, "_config", lambda _api: rendered.append("config"))
+    monkeypatch.setattr(
+        agent_page, "_authoring_form", lambda _api: rendered.append("authoring")
+    )
+    monkeypatch.setattr(agent_page, "_task_monitor", lambda _api: rendered.append("tasks"))
+
+    agent_page.render_agent(object())  # type: ignore[arg-type]
+
+    assert rendered == ["authoring"]
 
 
 def test_bridge_ticket_restores_cookie_then_authoritative_identity(

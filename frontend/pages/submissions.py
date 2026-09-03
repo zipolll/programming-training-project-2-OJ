@@ -7,6 +7,7 @@ import streamlit as st
 from frontend.api_client import ApiClient
 from frontend.components.common import render_status, show_error
 from frontend.components.ui import badges, empty_state, page_header, section_header
+from frontend.data_access import load_submission_options
 from frontend.errors import NetworkError
 from frontend.models import should_poll, status_text
 
@@ -19,8 +20,8 @@ def render_submit(api: ApiClient) -> None:
         eyebrow="READY TO JUDGE",
     )
     try:
-        problems = api.get("/problems/")["data"]
-        languages = api.get("/languages/")["data"]["name"]
+        with st.spinner("正在加载题目和语言..."):
+            problems, languages = load_submission_options(api)
     except Exception as exc:
         show_error(exc)
         return

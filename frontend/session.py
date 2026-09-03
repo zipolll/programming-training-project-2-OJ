@@ -17,6 +17,7 @@ BRIDGE_ACTION_KEY = "auth_bridge_action"
 BRIDGE_NONCE_KEY = "auth_bridge_nonce"
 BRIDGE_TOKEN_KEY = "auth_bridge_claim"
 BRIDGE_TICKET_KEY = "auth_bridge_last_ticket"
+BRIDGE_ATTEMPTED_KEY = "auth_bridge_attempted"
 
 
 def _state(state: MutableMapping[str, Any] | None) -> MutableMapping[str, Any]:
@@ -47,6 +48,7 @@ def _set_bridge_action(
     target = _state(state)
     target[BRIDGE_ACTION_KEY] = action
     target[BRIDGE_NONCE_KEY] = token_urlsafe(12)
+    target[BRIDGE_ATTEMPTED_KEY] = False
     if token is None:
         target.pop(BRIDGE_TOKEN_KEY, None)
     else:
@@ -92,7 +94,13 @@ def sync_browser_auth(
 ) -> dict[str, Any] | None:
     """Process browser bridge results before role-aware navigation is built."""
     target = _state(state)
-    action = str(target.get(BRIDGE_ACTION_KEY) or ("idle" if api.has_cookies else "restore"))
+    pending_action = target.get(BRIDGE_ACTION_KEY)
+    if pending_action in (None, "idle"):
+        if api.has_cookies or target.get(BRIDGE_ATTEMPTED_KEY):
+            return current_user(target)
+        action = "restore"
+    else:
+        action = str(pending_action)
     nonce = target.get(BRIDGE_NONCE_KEY)
     if not isinstance(nonce, str):
         nonce = token_urlsafe(12)
@@ -108,6 +116,7 @@ def sync_browser_auth(
     status = getattr(result, "status", None)
     if isinstance(status, str) and status.endswith(f":{nonce}"):
         target[BRIDGE_ACTION_KEY] = "idle"
+        target[BRIDGE_ATTEMPTED_KEY] = True
         target.pop(BRIDGE_TOKEN_KEY, None)
 
     ticket = getattr(result, "ticket", None)
@@ -125,6 +134,7 @@ def sync_browser_auth(
         request_browser_bridge_clear(target)
         return None
     target[BRIDGE_ACTION_KEY] = "idle"
+    target[BRIDGE_ATTEMPTED_KEY] = True
     return user
 
 

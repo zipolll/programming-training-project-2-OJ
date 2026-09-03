@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([switch]$NoReload)
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -42,10 +42,15 @@ try {
 
     $env:STREAMLIT_BROWSER_GATHER_USAGE_STATS = "false"
 
-    Write-Host "Starting backend at http://localhost:8000 ..."
+    $backendArguments = @("-m", "uvicorn", "backend.app.main:app")
+    if (-not $NoReload) {
+        $backendArguments += "--reload"
+    }
+    $mode = if ($NoReload) { "acceptance" } else { "development" }
+    Write-Host "Starting backend at http://localhost:8000 ($mode mode) ..."
     $backendProcess = Start-Process `
         -FilePath $pythonPath `
-        -ArgumentList @("-m", "uvicorn", "backend.app.main:app", "--reload") `
+        -ArgumentList $backendArguments `
         -WorkingDirectory $projectRoot `
         -NoNewWindow `
         -PassThru
@@ -76,10 +81,17 @@ try {
         throw "Backend did not become ready at http://localhost:8000/api/health."
     }
 
+    $frontendArguments = @(
+        "-m", "streamlit", "run", "frontend/app.py",
+        "--server.address", "127.0.0.1", "--server.port", "8501"
+    )
+    if ($NoReload) {
+        $frontendArguments += @("--server.fileWatcherType", "none")
+    }
     Write-Host "Starting frontend at http://localhost:8501 ..."
     $frontendProcess = Start-Process `
         -FilePath $pythonPath `
-        -ArgumentList @("-m", "streamlit", "run", "frontend/app.py", "--server.port", "8501") `
+        -ArgumentList $frontendArguments `
         -WorkingDirectory $projectRoot `
         -NoNewWindow `
         -PassThru

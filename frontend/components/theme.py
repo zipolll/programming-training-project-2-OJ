@@ -355,5 +355,5 @@ code, pre { font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace 
 
 
 def apply_theme() -> None:
-    """Inject the offline-safe design tokens and component styling."""
-    st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+    """Inject styles without invoking the Markdown parser on every rerun."""
+    st.html(GLOBAL_CSS)

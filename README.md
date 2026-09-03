@@ -138,6 +138,9 @@ Windows 下也可以双击仓库根目录的 `start_oj.cmd`，或在 PowerShell 
 
 脚本会使用项目 `.venv` 同时启动后端和前端；访问
 <http://localhost:8501>，按 `Ctrl+C` 可一起停止两个服务。
+开发脚本默认启用后端自动重载。性能测试或课程验收时可双击
+`start_oj_fast.cmd`，也可以运行 `./scripts/start_dev.ps1 -NoReload`，以关闭文件
+监听和 reload 进程，减少额外开销。
 
 ## Streamlit 前端
 

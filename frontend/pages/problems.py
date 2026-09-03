@@ -7,6 +7,7 @@ import streamlit as st
 from frontend.api_client import ApiClient
 from frontend.components.common import show_error
 from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
+from frontend.data_access import invalidate_problem_cache, load_problem_summaries
 from frontend.models import build_problem_payload, validate_problem
 
 
@@ -73,7 +74,8 @@ def render_problem_list(api: ApiClient) -> None:
         eyebrow="CHALLENGE LIBRARY",
     )
     try:
-        problems = api.get("/problems/")["data"]
+        with st.spinner("正在加载题目..."):
+            problems = load_problem_summaries(api.base_url, api)
     except Exception as exc:
         show_error(exc)
         st.info("登录后查看题目列表。")
@@ -187,6 +189,7 @@ def render_problem_management(api: ApiClient, is_admin: bool) -> None:
                 except Exception as exc:
                     show_error(exc)
                 else:
+                    invalidate_problem_cache()
                     st.success("题目删除成功。")
             return
         initial = _load_problem(api, problem_id)
@@ -209,4 +212,5 @@ def render_problem_management(api: ApiClient, is_admin: bool) -> None:
     except Exception as exc:
         show_error(exc)
     else:
+        invalidate_problem_cache()
         st.success("题目保存成功。")

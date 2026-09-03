@@ -7,6 +7,7 @@ import streamlit as st
 from frontend.components.common import show_error
 from frontend.components.theme import apply_theme
 from frontend.components.ui import badges, feature_grid, page_header, section_header
+from frontend.data_access import load_service_status
 from frontend.models import NAVIGATION_METADATA, navigation_sections
 from frontend.pages.agent import render_agent
 from frontend.pages.auth import (
@@ -44,11 +45,10 @@ def render_home() -> None:
     section_header("服务状态", icon="🛰️")
     api = get_api_client()
     try:
-        result = api.get_health()
+        status = load_service_status(api.base_url, api)
     except Exception as exc:
         show_error(exc)
     else:
-        status = result["data"]["status"]
         st.success("系统运行正常。" if status == "ok" else f"系统状态：{status}")
 
 
@@ -74,7 +74,8 @@ def main() -> None:
     api = get_api_client()
     try:
         sync_browser_auth(api)
-        restore_identity(api)
+        if current_user() is None and api.has_cookies:
+            restore_identity(api)
     except Exception as exc:
         show_error(exc)
     user = current_user()
