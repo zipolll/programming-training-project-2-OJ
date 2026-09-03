@@ -34,6 +34,7 @@ from frontend.models import (
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
 from frontend.session import (
+    browser_bridge_base_url,
     clear_auth,
     current_user,
     get_api_client,
@@ -297,6 +298,32 @@ def test_confirmed_identity_skips_bridge_and_users_me_on_ordinary_rerun(
 
     assert sync_browser_auth(client, state) == {"id": 1, "role": "user"}
     assert requests == []
+
+
+@pytest.mark.parametrize(
+    ("api_url", "browser_host", "expected"),
+    [
+        (
+            "http://localhost:8000/api",
+            "127.0.0.1:8501",
+            "http://127.0.0.1:8000/api",
+        ),
+        (
+            "http://127.0.0.1:8000/api",
+            "localhost:8501",
+            "http://localhost:8000/api",
+        ),
+        (
+            "https://api.example.com/api",
+            "localhost:8501",
+            "https://api.example.com/api",
+        ),
+    ],
+)
+def test_browser_bridge_uses_same_loopback_hostname(
+    api_url: str, browser_host: str, expected: str
+) -> None:
+    assert browser_bridge_base_url(api_url, browser_host) == expected
 
 
 def test_reference_resources_are_requested_once_across_page_navigation() -> None:

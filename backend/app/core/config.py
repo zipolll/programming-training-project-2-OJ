@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     api_prefix: str = "/api"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:8501"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:8501",
+            "http://127.0.0.1:8501",
+        ]
+    )
     database_path: Path = Path("data/runtime/oj.sqlite3")
     problems_path: Path = Path("data/problems")
     judge_temp_root: Path | None = None

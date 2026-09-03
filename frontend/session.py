@@ -4,6 +4,7 @@ from collections.abc import MutableMapping
 from hashlib import sha256
 from secrets import token_urlsafe
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import streamlit as st
 
@@ -18,6 +19,7 @@ BRIDGE_NONCE_KEY = "auth_bridge_nonce"
 BRIDGE_TOKEN_KEY = "auth_bridge_claim"
 BRIDGE_TICKET_KEY = "auth_bridge_last_ticket"
 BRIDGE_ATTEMPTED_KEY = "auth_bridge_attempted"
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _state(state: MutableMapping[str, Any] | None) -> MutableMapping[str, Any]:
@@ -59,6 +61,30 @@ def request_browser_bridge_clear(
     state: MutableMapping[str, Any] | None = None,
 ) -> None:
     _set_bridge_action("clear", state)
+
+
+def browser_bridge_base_url(api_base_url: str, browser_host: str | None = None) -> str:
+    """Keep local browser fetches on the same hostname for strict cookies."""
+    if browser_host is None:
+        try:
+            browser_host = st.context.headers.get("Host")
+        except RuntimeError:
+            browser_host = None
+    if not browser_host:
+        return api_base_url
+    browser_parts = urlsplit(f"//{browser_host}")
+    api_parts = urlsplit(api_base_url)
+    browser_name = browser_parts.hostname
+    api_name = api_parts.hostname
+    if browser_name not in _LOOPBACK_HOSTS or api_name not in _LOOPBACK_HOSTS:
+        return api_base_url
+    formatted_host = f"[{browser_name}]" if ":" in browser_name else browser_name
+    netloc = formatted_host
+    if api_parts.port is not None:
+        netloc = f"{netloc}:{api_parts.port}"
+    return urlunsplit(
+        (api_parts.scheme, netloc, api_parts.path, api_parts.query, api_parts.fragment)
+    )
 
 
 def get_api_client(state: MutableMapping[str, Any] | None = None) -> ApiClient:
@@ -107,7 +133,7 @@ def sync_browser_auth(
         target[BRIDGE_NONCE_KEY] = nonce
     token = target.get(BRIDGE_TOKEN_KEY)
     result = mount_auth_bridge(
-        base_url=api.base_url,
+        base_url=browser_bridge_base_url(api.base_url),
         action=action,
         nonce=nonce,
         token=token if isinstance(token, str) else None,
