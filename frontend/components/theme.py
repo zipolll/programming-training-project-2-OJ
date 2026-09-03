@@ -254,6 +254,12 @@ a.anchor-link {
   border-color: var(--oj-primary) !important;
   box-shadow: 0 0 0 3px rgba(91,92,240,.12) !important;
 }
+[data-testid="stTextInput"] input::placeholder,
+[data-testid="stTextArea"] textarea::placeholder {
+  color: #98a2b3 !important;
+  font-style: italic;
+  opacity: 1;
+}
 .stButton > button, [data-testid="stFormSubmitButton"] button {
   border-radius: 10px;
   font-weight: 750;
@@ -319,6 +325,19 @@ a.anchor-link {
   border: 1px solid var(--oj-line);
   border-radius: 14px;
   box-shadow: 0 7px 18px rgba(73,80,135,.06);
+}
+[data-testid="stDataFrame"] [role="columnheader"] {
+  color: #344054;
+  background: #eef2ff;
+  font-weight: 800;
+}
+.oj-page-number {
+  padding-top: 2.25rem;
+  color: var(--oj-muted);
+  text-align: center;
+  font-size: .86rem;
+  font-weight: 750;
+  white-space: nowrap;
 }
 [data-testid="stAlert"] { border-radius: 13px; }
 code, pre { font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace !important; }

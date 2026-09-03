@@ -5,7 +5,7 @@ from typing import Any
 import streamlit as st
 
 from frontend.api_client import ApiClient
-from frontend.components.common import show_error
+from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
 from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
 from frontend.data_access import invalidate_problem_cache, load_problem_summaries
 from frontend.models import build_problem_payload, validate_problem
@@ -110,10 +110,16 @@ def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[d
         pairs.append(
             {
                 "input": left.text_area(
-                    f"{label} {index + 1} 输入", default["input"], key=f"{key}_{index}_in"
+                    f"{label} {index + 1} 输入",
+                    default["input"],
+                    key=f"{key}_{index}_in",
+                    placeholder=REQUIRED_PLACEHOLDER,
                 ),
                 "output": right.text_area(
-                    f"{label} {index + 1} 输出", default["output"], key=f"{key}_{index}_out"
+                    f"{label} {index + 1} 输出",
+                    default["output"],
+                    key=f"{key}_{index}_out",
+                    placeholder=REQUIRED_PLACEHOLDER,
                 ),
             }
         )
@@ -122,19 +128,39 @@ def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[d
 
 def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any] | None:
     data = initial or {}
-    problem_id = st.text_input("题目 ID", data.get("id", ""), disabled=initial is not None)
-    title = st.text_input("标题", data.get("title", ""))
-    description = st.text_area("题面", data.get("description", ""), height=160)
-    input_description = st.text_area("输入说明", data.get("input_description", ""))
-    output_description = st.text_area("输出说明", data.get("output_description", ""))
-    constraints = st.text_area("约束", data.get("constraints", ""))
+    problem_id = st.text_input(
+        "题目 ID",
+        data.get("id", ""),
+        disabled=initial is not None,
+        placeholder=REQUIRED_PLACEHOLDER,
+    )
+    title = st.text_input("标题", data.get("title", ""), placeholder=REQUIRED_PLACEHOLDER)
+    description = st.text_area(
+        "题面", data.get("description", ""), height=160, placeholder=REQUIRED_PLACEHOLDER
+    )
+    input_description = st.text_area(
+        "输入说明", data.get("input_description", ""), placeholder=REQUIRED_PLACEHOLDER
+    )
+    output_description = st.text_area(
+        "输出说明", data.get("output_description", ""), placeholder=REQUIRED_PLACEHOLDER
+    )
+    constraints = st.text_area(
+        "约束", data.get("constraints", ""), placeholder=REQUIRED_PLACEHOLDER
+    )
     samples = _pairs_editor("样例", f"{prefix}_samples", data.get("samples", []))
     testcases = _pairs_editor("测试点", f"{prefix}_tests", data.get("testcases", []))
-    hint = st.text_area("提示", data.get("hint", ""))
-    source = st.text_input("来源", data.get("source", ""))
-    author = st.text_input("作者", data.get("author", ""))
-    difficulty = st.text_input("难度", data.get("difficulty", ""))
-    tags = st.text_input("标签", ", ".join(data.get("tags", [])), help="使用英文逗号分隔")
+    hint = st.text_area("提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER)
+    source = st.text_input("来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER)
+    author = st.text_input("作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER)
+    difficulty = st.text_input(
+        "难度", data.get("difficulty", ""), placeholder=OPTIONAL_PLACEHOLDER
+    )
+    tags = st.text_input(
+        "标签",
+        ", ".join(data.get("tags", [])),
+        placeholder=OPTIONAL_PLACEHOLDER,
+        help="使用英文逗号分隔",
+    )
     time_limit = st.number_input(
         "时间限制（秒）", min_value=0.01, value=float(data.get("time_limit", 3.0))
     )
@@ -177,7 +203,7 @@ def render_problem_management(api: ApiClient, is_admin: bool) -> None:
     initial = None
     problem_id = ""
     if mode in {"编辑", "删除"}:
-        problem_id = st.text_input("要操作的题目 ID")
+        problem_id = st.text_input("要操作的题目 ID", placeholder=REQUIRED_PLACEHOLDER)
         if not problem_id:
             return
         if mode == "删除":

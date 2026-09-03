@@ -5,7 +5,7 @@ from collections.abc import Callable
 import streamlit as st
 
 from frontend.api_client import ApiClient
-from frontend.components.common import show_error
+from frontend.components.common import REQUIRED_PLACEHOLDER, show_error
 from frontend.components.ui import badges, info_card, page_header, section_header
 from frontend.errors import ApiError
 from frontend.models import validate_login, validate_registration
@@ -26,9 +26,15 @@ def render_register(api: ApiClient, on_success: Callable[[], None] | None = None
     )
     section_header("账户信息", icon="🪪")
     with st.form("register_form"):
-        username = st.text_input("用户名", help="3–40 个字符")
-        password = st.text_input("密码", type="password", help="至少 6 个字符")
-        confirmation = st.text_input("确认密码", type="password")
+        username = st.text_input(
+            "用户名", placeholder=REQUIRED_PLACEHOLDER, help="3–40 个字符"
+        )
+        password = st.text_input(
+            "密码", type="password", placeholder=REQUIRED_PLACEHOLDER, help="至少 6 个字符"
+        )
+        confirmation = st.text_input(
+            "确认密码", type="password", placeholder=REQUIRED_PLACEHOLDER
+        )
         submitted = st.form_submit_button("注册", type="primary")
     if not submitted:
         return
@@ -62,17 +68,21 @@ def render_register(api: ApiClient, on_success: Callable[[], None] | None = None
 
 
 def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -> None:
-    page_header(
-        "欢迎回来",
-        "登录后继续你的算法训练和评测挑战。",
-        icon="🔐",
-        eyebrow="PLAYER SIGN IN",
-    )
-    section_header("登录信息", icon="👤")
-    with st.form("login_form"):
-        username = st.text_input("用户名")
-        password = st.text_input("密码", type="password")
-        submitted = st.form_submit_button("登录", type="primary")
+    content = st.empty()
+    with content.container():
+        page_header(
+            "欢迎回来",
+            "登录后继续你的算法训练和评测挑战。",
+            icon="🔐",
+            eyebrow="PLAYER SIGN IN",
+        )
+        section_header("登录信息", icon="👤")
+        with st.form("login_form"):
+            username = st.text_input("用户名", placeholder=REQUIRED_PLACEHOLDER)
+            password = st.text_input(
+                "密码", type="password", placeholder=REQUIRED_PLACEHOLDER
+            )
+            submitted = st.form_submit_button("登录", type="primary")
     if not submitted:
         return
     errors = validate_login(username, password)
@@ -80,6 +90,14 @@ def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -
         for message in errors:
             st.error(message)
         return
+    content.empty()
+    with content.container():
+        page_header(
+            "正在登录",
+            "马上回到你的页面。",
+            icon="⏳",
+            eyebrow="SIGNING IN",
+        )
     try:
         api.post("/auth/login", json={"username": username, "password": password})
         user = restore_identity(api)
@@ -162,19 +180,75 @@ def render_user_admin(api: ApiClient) -> None:
         eyebrow="ADMIN CONTROL",
     )
     section_header("选手列表", icon="👥")
-    page_size = st.selectbox("每页数量", [10, 20, 50], index=0)
-    page = int(st.number_input("页码", min_value=1, value=1))
+    page_size = int(st.session_state.get("user_admin_page_size", 10))
+    page = int(st.session_state.get("user_admin_page", 1))
     try:
-        result = api.get("/users/", params={"page": page, "page_size": page_size})["data"]
+        with st.spinner("正在加载用户..."):
+            result = api.get("/users/", params={"page": page, "page_size": page_size})[
+                "data"
+            ]
     except Exception as exc:
         show_error(exc)
         return
     users = result.get("users", [])
-    st.caption(f"共 {result.get('total', 0)} 位用户")
+    total = int(result.get("total", 0))
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page > total_pages:
+        st.session_state.user_admin_page = total_pages
+        st.rerun()
+    st.caption(f"共 {total} 位用户")
     if not users:
         st.info("当前页没有用户。")
         return
-    st.dataframe(users, use_container_width=True, hide_index=True)
+    role_labels = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
+    display_users = [
+        {**item, "role": role_labels.get(str(item.get("role")), str(item.get("role")))}
+        for item in users
+    ]
+    st.dataframe(
+        display_users,
+        use_container_width=True,
+        hide_index=True,
+        column_order=(
+            "user_id",
+            "username",
+            "role",
+            "join_time",
+            "submit_count",
+            "resolve_count",
+        ),
+        column_config={
+            "user_id": st.column_config.TextColumn("用户 ID", width="small"),
+            "username": st.column_config.TextColumn("用户名", width="medium"),
+            "role": st.column_config.TextColumn("账号状态", width="small"),
+            "join_time": st.column_config.TextColumn("注册日期", width="medium"),
+            "submit_count": st.column_config.NumberColumn("提交次数", width="small"),
+            "resolve_count": st.column_config.NumberColumn("通过题目", width="small"),
+        },
+    )
+
+    def reset_page() -> None:
+        st.session_state.user_admin_page = 1
+
+    controls = st.columns([2.2, 1, 1.2, 1])
+    controls[0].selectbox(
+        "每页数量",
+        [10, 20, 50],
+        key="user_admin_page_size",
+        on_change=reset_page,
+    )
+    if controls[1].button("上一页", disabled=page <= 1, use_container_width=True):
+        st.session_state.user_admin_page = page - 1
+        st.rerun()
+    controls[2].markdown(
+        f"<div class='oj-page-number'>第 {page} / {total_pages} 页</div>",
+        unsafe_allow_html=True,
+    )
+    if controls[3].button(
+        "下一页", disabled=page >= total_pages, use_container_width=True
+    ):
+        st.session_state.user_admin_page = page + 1
+        st.rerun()
     section_header("角色调整", icon="⚠️")
     target = st.selectbox(
         "选择用户",

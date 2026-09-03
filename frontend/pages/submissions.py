@@ -5,7 +5,12 @@ from typing import Any
 import streamlit as st
 
 from frontend.api_client import ApiClient
-from frontend.components.common import render_status, show_error
+from frontend.components.common import (
+    OPTIONAL_PLACEHOLDER,
+    REQUIRED_PLACEHOLDER,
+    render_status,
+    show_error,
+)
 from frontend.components.ui import badges, empty_state, page_header, section_header
 from frontend.data_access import load_submission_options
 from frontend.errors import NetworkError
@@ -35,7 +40,12 @@ def render_submit(api: ApiClient) -> None:
             "题目", problems, format_func=lambda item: f"{item['id']} · {item['title']}"
         )
         language = st.selectbox("语言", languages)
-        code = st.text_area("代码", height=360, help="请按照题目的输入输出要求编写完整代码。")
+        code = st.text_area(
+            "代码",
+            height=360,
+            placeholder=REQUIRED_PLACEHOLDER,
+            help="请按照题目的输入输出要求编写完整代码。",
+        )
         submitted = st.form_submit_button("提交评测", type="primary")
     if not submitted:
         return
@@ -167,12 +177,13 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
     )
     section_header("筛选条件", icon="🔎")
     left, middle, right = st.columns(3)
-    problem_id = left.text_input("题目 ID 筛选")
+    problem_id = left.text_input("题目 ID 筛选", placeholder=OPTIONAL_PLACEHOLDER)
     status = middle.selectbox("状态筛选", ["全部", "pending", "success", "error"])
     user_id = right.text_input(
         "用户 ID 筛选",
         value="" if is_admin else str(user["id"]),
         disabled=not is_admin,
+        placeholder=OPTIONAL_PLACEHOLDER,
     )
     page_size = st.selectbox("每页数量", [10, 20, 50])
     page = int(st.number_input("页码", min_value=1, value=1))
@@ -223,7 +234,7 @@ def render_visibility(api: ApiClient) -> None:
         eyebrow="ADMIN VISIBILITY",
     )
     section_header("可见性设置", icon="🔐")
-    problem_id = st.text_input("题目 ID")
+    problem_id = st.text_input("题目 ID", placeholder=REQUIRED_PLACEHOLDER)
     public_cases = st.toggle("向所有已登录用户公开测试点日志")
     confirmed = st.checkbox("我确认修改该题目的日志可见性。")
     if st.button("保存可见性", type="primary", disabled=not confirmed or not problem_id):

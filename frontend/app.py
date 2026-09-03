@@ -23,7 +23,13 @@ from frontend.pages.submissions import (
     render_submit,
     render_visibility,
 )
-from frontend.session import current_user, get_api_client, restore_identity, sync_browser_auth
+from frontend.session import (
+    auth_resolution_pending,
+    current_user,
+    get_api_client,
+    restore_identity,
+    sync_browser_auth,
+)
 
 
 def render_home() -> None:
@@ -78,6 +84,14 @@ def main() -> None:
             restore_identity(api)
     except Exception as exc:
         show_error(exc)
+    if auth_resolution_pending(api):
+        page_header(
+            "正在载入",
+            "马上回到你的页面。",
+            icon="⏳",
+            eyebrow="LOADING",
+        )
+        st.stop()
     user = current_user()
     role = str(user.get("role")) if user else None
 
@@ -103,6 +117,7 @@ def main() -> None:
                 "题目管理": _page(
                     lambda: render_problem_management(api, role == "admin"), "题目管理"
                 ),
+                "AI 智能命题": _page(lambda: render_agent(api), "AI 智能命题"),
                 "提交代码": _page(lambda: render_submit(api), "提交代码"),
                 "提交记录": _page(
                     lambda: render_submission_list(api, user, role == "admin"), "提交记录"
@@ -114,7 +129,6 @@ def main() -> None:
         if role == "admin":
             renderers.update(
                 {
-                    "AI 智能命题": _page(lambda: render_agent(api), "AI 智能命题"),
                     "用户管理": _page(lambda: render_user_admin(api), "用户管理"),
                     "日志可见性": _page(lambda: render_visibility(api), "日志可见性"),
                 }

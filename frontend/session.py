@@ -159,9 +159,27 @@ def sync_browser_auth(
     except ApiError:
         request_browser_bridge_clear(target)
         return None
+    except Exception:
+        # Do not leave the interface behind the initial loading gate when the
+        # service is temporarily unreachable. The caller still presents the
+        # friendly connection error and a later rerun can retry normally.
+        target[BRIDGE_ATTEMPTED_KEY] = True
+        raise
     target[BRIDGE_ACTION_KEY] = "idle"
     target[BRIDGE_ATTEMPTED_KEY] = True
     return user
+
+
+def auth_resolution_pending(
+    api: ApiClient,
+    state: MutableMapping[str, Any] | None = None,
+) -> bool:
+    """Report the initial HttpOnly-cookie lookup without exposing auth data."""
+    target = _state(state)
+    if current_user(target) is not None or api.has_cookies:
+        return False
+    action = target.get(BRIDGE_ACTION_KEY)
+    return action in (None, "restore") and not bool(target.get(BRIDGE_ATTEMPTED_KEY))
 
 
 def restore_identity(

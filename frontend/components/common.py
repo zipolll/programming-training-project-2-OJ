@@ -9,6 +9,9 @@ from frontend.components.ui import status_badge
 from frontend.errors import ApiError, NetworkError
 from frontend.models import status_text
 
+REQUIRED_PLACEHOLDER = "必填"
+OPTIONAL_PLACEHOLDER = "选填"
+
 
 def show_error(exc: Exception) -> None:
     if isinstance(exc, (ApiError, NetworkError)):
