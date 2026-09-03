@@ -1,6 +1,8 @@
 """Frontend API, state, conversion, navigation, and smoke tests."""
 
 import json
+import re
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -8,18 +10,27 @@ import httpx
 import pytest
 
 from frontend.api_client import ApiClient
+from frontend.components import ui
+from frontend.components.theme import GLOBAL_CSS
 from frontend.errors import ApiError, NetworkError, ProtocolError
 from frontend.models import (
+    NAVIGATION_LAYOUT,
+    NAVIGATION_METADATA,
     build_problem_payload,
     navigation_for,
+    navigation_sections,
     should_poll,
     status_text,
+    validate_login,
     validate_problem,
     validate_registration,
 )
+from frontend.pages import agent as agent_page
+from frontend.pages import auth as auth_page
 from frontend.session import (
     clear_auth,
     current_user,
+    get_api_client,
     logout_local,
     restore_identity,
     set_auth_user,
@@ -99,8 +110,17 @@ def test_403_preserves_cookie_and_identity_callback() -> None:
     assert callback == []
 
 
-@pytest.mark.parametrize("status", [400, 404, 409, 429, 500])
-def test_http_errors_keep_backend_message(status: int) -> None:
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (400, "填写内容有误，请检查后重试。"),
+        (404, "没有找到相关内容。"),
+        (409, "当前操作存在冲突，请刷新后重试。"),
+        (429, "操作过于频繁，请稍后再试。"),
+        (500, "服务暂时不可用，请稍后重试。"),
+    ],
+)
+def test_http_errors_hide_technical_backend_message(status: int, expected: str) -> None:
     client = ApiClient(
         "http://test/api",
         transport=httpx.MockTransport(lambda _: envelope(status, msg="specific message")),
@@ -108,7 +128,38 @@ def test_http_errors_keep_backend_message(status: int) -> None:
     with pytest.raises(ApiError) as caught:
         client.get("/failure")
     assert caught.value.status_code == status
-    assert "specific message" in caught.value.user_message
+    assert caught.value.user_message == expected
+    assert "specific message" not in caught.value.user_message
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ({"type": "missing", "loc": ["body", "password"], "msg": "Field required"}, "请输入密码。"),
+        (
+            {"type": "string_too_long", "loc": ["body", "title"], "msg": "too long"},
+            "标题内容过长，请适当精简。",
+        ),
+        (
+            {"type": "int_parsing", "loc": ["query", "user_id"], "msg": "bad int"},
+            "用户 ID 格式不正确，请填写有效数字。",
+        ),
+    ],
+)
+def test_validation_errors_are_translated_by_field(error: dict[str, Any], expected: str) -> None:
+    exc = ApiError(400, "Invalid request data", [error])
+    assert exc.user_message == expected
+    assert "Invalid" not in exc.user_message
+
+
+def test_known_backend_messages_are_translated() -> None:
+    assert ApiError(401, "Invalid username or password").user_message == (
+        "用户名或密码错误，请重新输入。"
+    )
+    assert ApiError(403, "Permission denied").user_message == "你没有权限执行此操作。"
+    assert ApiError(400, "Username already exists").user_message == (
+        "该用户名已被使用，请换一个试试。"
+    )
 
 
 @pytest.mark.parametrize(
@@ -153,6 +204,13 @@ def test_registration_validation() -> None:
         "两次输入的密码不一致。",
     ]
     assert validate_registration("alice", "secret1", "secret1") == []
+    assert validate_registration("", "", "") == [
+        "请输入用户名。",
+        "请输入密码。",
+        "请再次输入密码。",
+    ]
+    assert validate_login("", "") == ["请输入用户名。", "请输入密码。"]
+    assert validate_login("ab", "secret1") == ["用户不存在。"]
 
 
 def test_problem_payload_multiple_samples_and_testcases() -> None:
@@ -195,6 +253,26 @@ def test_auth_state_is_explicit_and_logout_clears_cookie() -> None:
     logout_local(client, state)
     assert not client.has_cookies
     assert current_user(state) is None
+
+
+def test_api_client_survives_streamlit_state_refresh_for_same_browser() -> None:
+    first_state: dict[str, Any] = {}
+    refreshed_state: dict[str, Any] = {}
+    other_browser_state: dict[str, Any] = {}
+    browser_cookie = {"_streamlit_xsrf": "browser-a"}
+
+    first = get_api_client(first_state, browser_cookie)
+    first._client.cookies.set("session_id", "secret")
+    refreshed = get_api_client(refreshed_state, browser_cookie)
+    other = get_api_client(other_browser_state, {"_streamlit_xsrf": "browser-b"})
+
+    assert refreshed is first
+    assert refreshed.has_cookies
+    assert other is not first
+    assert not other.has_cookies
+
+    logout_local(first, refreshed_state)
+    logout_local(other, other_browser_state)
 
 
 def test_login_cookie_restores_authoritative_identity() -> None:
@@ -245,8 +323,164 @@ def test_navigation_is_role_aware() -> None:
     regular = navigation_for("user")
     admin = navigation_for("admin")
     assert "登录" in anonymous and "提交代码" not in anonymous
+    assert "题目列表" not in anonymous
     assert "提交代码" in regular and "用户管理" not in regular
     assert {"用户管理", "日志可见性"} <= set(admin)
+
+
+def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
+    configured_pages = [page for pages in NAVIGATION_LAYOUT.values() for page in pages]
+    assert set(configured_pages) == set(NAVIGATION_METADATA)
+    assert len(configured_pages) == len(set(configured_pages))
+    paths = [metadata["url_path"] for metadata in NAVIGATION_METADATA.values()]
+    assert len(paths) == len(set(paths))
+    assert all(
+        metadata["icon"].startswith(":material/") for metadata in NAVIGATION_METADATA.values()
+    )
+
+    assert navigation_sections(None) == {
+        "概览": ["首页"],
+        "账户": ["注册", "登录"],
+    }
+    assert navigation_sections("user")["评测"] == ["提交代码", "提交记录"]
+    assert navigation_sections("admin")["题目"][-1] == "AI 智能命题"
+    assert navigation_sections("admin")["评测"][-1] == "日志可见性"
+
+
+def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubApi:
+        def post(self, path: str, **_: Any) -> None:
+            calls.append(path)
+
+    calls: list[str] = []
+    transitions: list[str] = []
+    inputs = iter(["alice", "secret1"])
+    monkeypatch.setattr(auth_page.st, "title", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "form", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(auth_page.st, "text_input", lambda *_args, **_kwargs: next(inputs))
+    monkeypatch.setattr(auth_page.st, "form_submit_button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(auth_page.st, "success", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(auth_page, "restore_identity", lambda _api: {"id": 1, "role": "user"})
+    monkeypatch.setattr(auth_page, "set_auth_user", lambda _user: None)
+    monkeypatch.setattr(auth_page, "logout_local", lambda _api: transitions.append("cleared"))
+    monkeypatch.setattr(
+        auth_page.st,
+        "rerun",
+        lambda: pytest.fail("navigation callback should replace a plain rerun"),
+    )
+
+    auth_page.render_login(StubApi(), lambda: transitions.append("login-home"))
+    auth_page.render_logout(StubApi(), lambda: transitions.append("logout-home"))
+
+    assert calls == ["/auth/login", "/auth/logout"]
+    assert transitions == ["login-home", "cleared", "logout-home"]
+
+
+def test_registration_logs_in_and_uses_navigation_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubApi:
+        def post(self, path: str, **kwargs: Any) -> None:
+            calls.append((path, kwargs.get("json")))
+
+    calls: list[tuple[str, Any]] = []
+    transitions: list[str] = []
+    inputs = iter(["alice", "secret1", "secret1"])
+    monkeypatch.setattr(auth_page, "page_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "form", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(auth_page.st, "text_input", lambda *_args, **_kwargs: next(inputs))
+    monkeypatch.setattr(auth_page.st, "form_submit_button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(auth_page.st, "success", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        auth_page,
+        "restore_identity",
+        lambda _api: {"id": 1, "username": "alice", "role": "user"},
+    )
+    monkeypatch.setattr(
+        auth_page,
+        "set_auth_user",
+        lambda user: transitions.append(f"authenticated:{user['username']}"),
+    )
+    monkeypatch.setattr(
+        auth_page.st,
+        "rerun",
+        lambda: pytest.fail("navigation callback should replace a plain rerun"),
+    )
+
+    auth_page.render_register(StubApi(), lambda: transitions.append("register-home"))
+
+    credentials = {"username": "alice", "password": "secret1"}
+    assert calls == [("/users/", credentials), ("/auth/login", credentials)]
+    assert transitions == ["authenticated:alice", "register-home"]
+
+
+def test_empty_login_is_rejected_before_api_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailApi:
+        def post(self, *_args: Any, **_kwargs: Any) -> None:
+            pytest.fail("empty login must not call the API")
+
+    messages: list[str] = []
+    inputs = iter(["", ""])
+    monkeypatch.setattr(auth_page, "page_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "form", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(auth_page.st, "text_input", lambda *_args, **_kwargs: next(inputs))
+    monkeypatch.setattr(auth_page.st, "form_submit_button", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(auth_page.st, "error", lambda message, **_kwargs: messages.append(message))
+
+    auth_page.render_login(FailApi())
+
+    assert messages == ["请输入用户名。", "请输入密码。"]
+
+
+def test_admin_profile_uses_admin_identity_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubApi:
+        def get(self, _path: str) -> dict[str, Any]:
+            return {
+                "data": {
+                    "username": "root",
+                    "role": "admin",
+                    "join_time": "2026-09-03",
+                    "submit_count": 0,
+                    "resolve_count": 0,
+                }
+            }
+
+    class Column:
+        def __enter__(self) -> "Column":
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def metric(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    headers: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(
+        auth_page,
+        "page_header",
+        lambda title, _subtitle, **kwargs: headers.append((title, kwargs)),
+    )
+    monkeypatch.setattr(auth_page, "badges", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page, "info_card", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(auth_page.st, "columns", lambda count: [Column() for _ in range(count)])
+
+    auth_page.render_profile(StubApi(), {"id": 1})
+
+    assert headers == [("管理员中心", {"icon": "🛡️", "eyebrow": "ADMIN ACCOUNT"})]
+
+
+def test_problem_operation_radio_hides_redundant_label() -> None:
+    frontend = Path(__file__).parents[1] / "frontend"
+    source = (frontend / "pages" / "problems.py").read_text(encoding="utf-8")
+    assert 'section_header("操作", icon="🎛️")' in source
+    assert 'label_visibility="collapsed"' in source
+    assert "选择操作" not in source
 
 
 def test_submission_state_and_accessible_labels() -> None:
@@ -257,10 +491,89 @@ def test_submission_state_and_accessible_labels() -> None:
     assert status_text("TLE") == "时间超限（TLE）"
 
 
+def test_visual_theme_has_required_tokens_and_accessibility_rules() -> None:
+    normalized = GLOBAL_CSS.lower()
+    assert "#5b5cf0" in normalized
+    assert "#06b6d4" in normalized
+    assert "#f97316" in normalized
+    assert "pingfang sc" in normalized
+    assert "prefers-reduced-motion" in normalized
+    assert "focus-visible" in normalized
+    assert "max-width: 600px" in normalized
+    assert ".oj-section-title h2" in normalized
+    assert "padding: 0 !important" in normalized
+    assert "align-items: center" in normalized
+    assert '[data-baseweb="tab-highlight"]' in normalized
+    assert '[data-baseweb="tab-border"]' in normalized
+    assert "background: transparent !important" in normalized
+    assert "border-left: 4px solid var(--oj-primary)" not in normalized
+    assert '[data-testid="stheaderactionelements"]' in normalized
+
+
+def test_visual_components_escape_dynamic_html(monkeypatch: pytest.MonkeyPatch) -> None:
+    rendered: list[tuple[str, bool]] = []
+
+    def capture(body: str, *, unsafe_allow_html: bool = False) -> None:
+        rendered.append((body, unsafe_allow_html))
+
+    monkeypatch.setattr(ui.st, "markdown", capture)
+    ui.page_header("<script>alert(1)</script>", '"unsafe"', icon="<")
+    ui.timeline_event("<time>", "stage", "<img src=x onerror=alert(1)>")
+    ui.feature_grid([("<", "第一项", "安全描述"), ("②", "第二项", "<script>unsafe</script>")])
+
+    combined = "".join(body for body, _ in rendered)
+    assert "<script>" not in combined
+    assert "<img src=" not in combined
+    assert "&lt;script&gt;" in combined
+    assert "&lt;img src=x onerror=alert(1)&gt;" in combined
+    assert "&lt;script&gt;unsafe&lt;/script&gt;" in combined
+    assert not re.search(r"\n[ \t]{4,}<article", rendered[-1][0])
+    assert all(unsafe for _, unsafe in rendered)
+
+
+def test_user_facing_pages_have_no_manual_required_asterisks_or_technical_copy() -> None:
+    frontend = Path(__file__).parents[1] / "frontend"
+    page_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [frontend / "app.py", *(frontend / "pages").glob("*.py")]
+    )
+    assert not re.search(r'("|f")[^"\n]* \*"', page_sources)
+    for phrase in ("Invalid request data", "课程 API", "FastAPI", "后端", "Session", "Cookie"):
+        assert phrase not in page_sources
+    for redundant_copy in ("选择新增、编辑或删除题目", "输入用户名和密码，继续你的训练"):
+        assert redundant_copy not in page_sources
+
+
+def test_agent_currency_uses_common_and_custom_options() -> None:
+    assert agent_page.COMMON_CURRENCIES == ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
+    source = Path(agent_page.__file__).read_text(encoding="utf-8")
+    assert "accept_new_options=True" in source
+
+
+def test_status_badges_use_distinct_accessible_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        ui.st,
+        "markdown",
+        lambda body, **_kwargs: rendered.append(body),
+    )
+    for status in ("pending", "success", "error"):
+        ui.status_badge(status)
+    assert "oj-badge--orange" in rendered[0] and "oj-badge--pending" in rendered[0]
+    assert "oj-badge--green" in rendered[1]
+    assert "oj-badge--red" in rendered[2]
+    statuses = ("pending", "success", "error")
+    assert all(status in body for status, body in zip(statuses, rendered, strict=True))
+
+
 def test_streamlit_application_smoke() -> None:
     testing = pytest.importorskip("streamlit.testing.v1")
     app_path = Path(__file__).parents[1] / "frontend" / "app.py"
     app = testing.AppTest.from_file(app_path, default_timeout=10).run()
     assert not app.exception
-    assert app.title[0].value == "Programming Training OJ"
-    assert app.selectbox[0].options == navigation_for(None)
+    assert any("Programming Training OJ" in item.value for item in app.markdown)
+    assert any("oj-feature-grid" in item.value for item in app.markdown)
+    assert not any("<article" in item.value for item in app.code)
+    assert len(app.selectbox) == 0

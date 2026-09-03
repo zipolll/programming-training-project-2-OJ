@@ -5,6 +5,7 @@ from typing import Any
 
 import streamlit as st
 
+from frontend.components.ui import status_badge
 from frontend.errors import ApiError, NetworkError
 from frontend.models import status_text
 
@@ -18,6 +19,7 @@ def show_error(exc: Exception) -> None:
 
 def render_status(status: str | None) -> None:
     text = status_text(status)
+    status_badge(status or "未知")
     if status == "pending":
         st.info(text, icon="⏳")
     elif status == "error" or status in {"WA", "CE", "RE", "TLE", "MLE", "UNK"}:

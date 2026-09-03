@@ -130,6 +130,15 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 python -m streamlit run frontend/app.py
 ```
 
+Windows 下也可以双击仓库根目录的 `start_oj.cmd`，或在 PowerShell 中运行：
+
+```powershell
+.\scripts\start_dev.ps1
+```
+
+脚本会使用项目 `.venv` 同时启动后端和前端；访问
+<http://localhost:8501>，按 `Ctrl+C` 可一起停止两个服务。
+
 ## Streamlit 前端
 
 前端默认访问 `http://localhost:8000/api`。需要使用其他后端地址时，在启动

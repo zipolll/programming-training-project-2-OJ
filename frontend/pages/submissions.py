@@ -6,12 +6,18 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import render_status, show_error
+from frontend.components.ui import badges, empty_state, page_header, section_header
 from frontend.errors import NetworkError
 from frontend.models import should_poll, status_text
 
 
 def render_submit(api: ApiClient) -> None:
-    st.title("提交代码")
+    page_header(
+        "提交挑战",
+        "选择题目和语言，提交代码并等待评测结果。",
+        icon="⚡",
+        eyebrow="READY TO JUDGE",
+    )
     try:
         problems = api.get("/problems/")["data"]
         languages = api.get("/languages/")["data"]["name"]
@@ -19,19 +25,21 @@ def render_submit(api: ApiClient) -> None:
         show_error(exc)
         return
     if not problems or not languages:
-        st.info("当前没有可提交的题目或语言。")
+        empty_state("当前没有可提交的题目或语言。", icon="⌛")
         return
+    badges([(f"{len(problems)} 道可选题", "cyan"), (" / ".join(languages), "orange")])
+    section_header("代码与运行环境", icon="💻")
     with st.form("submission_form"):
         problem = st.selectbox(
-            "题目 *", problems, format_func=lambda item: f"{item['id']} · {item['title']}"
+            "题目", problems, format_func=lambda item: f"{item['id']} · {item['title']}"
         )
-        language = st.selectbox("语言 *", languages)
-        code = st.text_area("代码 *", height=360, help="代码只发送到后端评测，不保存到前端文件。")
+        language = st.selectbox("语言", languages)
+        code = st.text_area("代码", height=360, help="请按照题目的输入输出要求编写完整代码。")
         submitted = st.form_submit_button("提交评测", type="primary")
     if not submitted:
         return
     if not code.strip():
-        st.error("代码不能为空。")
+        st.error("请输入代码。")
         return
     try:
         result = api.post(
@@ -48,7 +56,10 @@ def render_submit(api: ApiClient) -> None:
 
 
 def _render_detail_data(data: dict[str, Any]) -> None:
-    st.subheader(f"提交 #{data['submission_id']}")
+    section_header(
+        f"提交 #{data['submission_id']}",
+        icon="🏁",
+    )
     render_status(data.get("status"))
     if data.get("score") is not None:
         st.metric("得分", f"{data['score']} / {data.get('counts', '—')}")
@@ -71,7 +82,7 @@ def _fetch_and_render_detail(api: ApiClient, submission_id: str) -> str | None:
 
 
 def _render_log(api: ApiClient, submission_id: str) -> None:
-    st.subheader("测试点日志")
+    section_header("测试点日志", icon="🔬")
     if not st.button("查看测试点日志", key=f"log_{submission_id}"):
         return
     try:
@@ -81,7 +92,7 @@ def _render_log(api: ApiClient, submission_id: str) -> None:
         return
     details = data.get("details", [])
     if not details:
-        st.info("暂时没有测试点日志。")
+        empty_state("暂时没有测试点日志。", icon="🧪")
     else:
         rows = [
             {
@@ -133,7 +144,7 @@ def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool)
 
     _render_log(api, submission_id)
     if is_admin:
-        st.subheader("管理员操作")
+        section_header("管理员操作", icon="🛡️")
         confirmed = st.checkbox("我确认重新评测该提交。", key=f"rejudge_confirm_{submission_id}")
         if st.button("重新评测", disabled=not confirmed, key=f"rejudge_{submission_id}"):
             try:
@@ -147,7 +158,13 @@ def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool)
 
 
 def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool) -> None:
-    st.title("提交记录")
+    page_header(
+        "评测战绩",
+        "筛选历史提交，复盘每一次等待、通过与错误。",
+        icon="📈",
+        eyebrow="SUBMISSION HISTORY",
+    )
+    section_header("筛选条件", icon="🔎")
     left, middle, right = st.columns(3)
     problem_id = left.text_input("题目 ID 筛选")
     status = middle.selectbox("状态筛选", ["全部", "pending", "success", "error"])
@@ -162,6 +179,9 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
     if problem_id.strip():
         params["problem_id"] = problem_id.strip()
     if user_id.strip():
+        if not user_id.strip().isdigit() or int(user_id) < 1:
+            st.error("用户 ID 只能填写正整数。")
+            return
         params["user_id"] = int(user_id)
     if status != "全部":
         params["status"] = status
@@ -176,8 +196,9 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
     st.caption(f"共 {data.get('total', 0)} 条记录")
     submissions = data.get("submissions", [])
     if not submissions:
-        st.info("没有符合条件的提交。")
+        empty_state("没有符合条件的提交。", icon="📭")
         return
+    badges([(f"共 {data.get('total', 0)} 条", "cyan"), (f"第 {page} 页", "orange")])
     rows = [
         {
             "提交编号": item["submission_id"],
@@ -194,8 +215,14 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
 
 
 def render_visibility(api: ApiClient) -> None:
-    st.title("日志可见性管理")
-    problem_id = st.text_input("题目 ID *")
+    page_header(
+        "日志开放策略",
+        "控制题目测试点日志是否向其他已登录用户公开。",
+        icon="👁️",
+        eyebrow="ADMIN VISIBILITY",
+    )
+    section_header("可见性设置", icon="🔐")
+    problem_id = st.text_input("题目 ID")
     public_cases = st.toggle("向所有已登录用户公开测试点日志")
     confirmed = st.checkbox("我确认修改该题目的日志可见性。")
     if st.button("保存可见性", type="primary", disabled=not confirmed or not problem_id):
@@ -207,6 +234,5 @@ def render_visibility(api: ApiClient) -> None:
         except Exception as exc:
             show_error(exc)
         else:
-            st.success(
-                f"后端已确认：{result['problem_id']} 的公开状态为 {result['public_cases']}。"
-            )
+            visibility = "公开" if result["public_cases"] else "仅限有权限的用户查看"
+            st.success(f"题目 {result['problem_id']} 的测试点日志已设为{visibility}。")

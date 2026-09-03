@@ -58,21 +58,21 @@ class ApiClient:
         except httpx.TimeoutException as exc:
             raise NetworkError("请求超时，请稍后重试。", is_timeout=True) from exc
         except httpx.RequestError as exc:
-            raise NetworkError("无法连接后端服务，请确认 FastAPI 已启动。") from exc
+            raise NetworkError("暂时无法连接服务，请稍后重试。") from exc
 
         try:
             payload = response.json()
         except ValueError as exc:
-            raise ProtocolError(response.status_code, "后端返回了非 JSON 响应。") from exc
+            raise ProtocolError(response.status_code, "服务响应异常。") from exc
         if (
             not isinstance(payload, dict)
             or {"code", "msg", "data"} - payload.keys()
             or not isinstance(payload.get("code"), int)
             or not isinstance(payload.get("msg"), str)
         ):
-            raise ProtocolError(response.status_code, "后端响应格式不正确。")
+            raise ProtocolError(response.status_code, "服务响应异常。")
         if payload["code"] != response.status_code:
-            raise ProtocolError(response.status_code, "后端状态码与响应 code 不一致。")
+            raise ProtocolError(response.status_code, "服务响应异常。")
         if response.status_code >= 400:
             if response.status_code == 401:
                 self.clear_cookies()
