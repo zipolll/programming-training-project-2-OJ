@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     session_cookie_name: str = "session_id"
     session_max_age_seconds: int = 7 * 24 * 60 * 60
     session_cookie_secure: bool = False
+    session_bridge_cookie_name: str = "oj_auth_bridge"
+    session_bridge_max_age_seconds: int = 7 * 24 * 60 * 60
+    session_bridge_ticket_ttl_seconds: int = 30
 
 
 @lru_cache

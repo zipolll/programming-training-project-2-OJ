@@ -199,3 +199,154 @@ class SessionRepository:
         async with self.database.connect() as connection:
             await connection.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
             await connection.commit()
+
+
+class AuthBridgeRepository:
+    """Store only hashes for browser recovery tokens and one-time tickets."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    async def create_bridge(
+        self,
+        token_hash: str,
+        session_id_hash: str,
+        user_id: int,
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO auth_bridges
+                    (token_hash, session_id_hash, user_id, claimed, created_at, expires_at)
+                VALUES (?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    token_hash,
+                    session_id_hash,
+                    user_id,
+                    _serialize_datetime(created_at),
+                    _serialize_datetime(expires_at),
+                ),
+            )
+            await connection.commit()
+
+    async def claim_bridge(self, token_hash: str, now: datetime) -> bool:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE auth_bridges SET claimed = 1
+                WHERE token_hash = ? AND claimed = 0 AND expires_at > ?
+                """,
+                (token_hash, _serialize_datetime(now)),
+            )
+            await connection.commit()
+        return cursor.rowcount == 1
+
+    async def get_bridge_user(self, token_hash: str, now: datetime) -> User | None:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT users.* FROM auth_bridges
+                JOIN sessions ON sessions.id_hash = auth_bridges.session_id_hash
+                JOIN users ON users.id = auth_bridges.user_id
+                WHERE auth_bridges.token_hash = ?
+                  AND auth_bridges.claimed = 1
+                  AND auth_bridges.expires_at > ?
+                  AND sessions.expires_at > ?
+                """,
+                (token_hash, _serialize_datetime(now), _serialize_datetime(now)),
+            )
+            row = await cursor.fetchone()
+        return _deserialize_user(row) if row else None
+
+    async def create_ticket(
+        self,
+        ticket_hash: str,
+        bridge_hash: str,
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                """
+                INSERT INTO auth_bridge_tickets
+                    (ticket_hash, bridge_hash, created_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    ticket_hash,
+                    bridge_hash,
+                    _serialize_datetime(created_at),
+                    _serialize_datetime(expires_at),
+                ),
+            )
+            await connection.commit()
+
+    async def consume_ticket(self, ticket_hash: str, now: datetime) -> tuple[str, int] | None:
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                """
+                SELECT auth_bridge_tickets.bridge_hash, auth_bridges.user_id
+                FROM auth_bridge_tickets
+                JOIN auth_bridges
+                  ON auth_bridges.token_hash = auth_bridge_tickets.bridge_hash
+                JOIN sessions ON sessions.id_hash = auth_bridges.session_id_hash
+                JOIN users ON users.id = auth_bridges.user_id
+                WHERE auth_bridge_tickets.ticket_hash = ?
+                  AND auth_bridge_tickets.expires_at > ?
+                  AND auth_bridges.claimed = 1
+                  AND auth_bridges.expires_at > ?
+                  AND sessions.expires_at > ?
+                  AND users.role != 'banned'
+                """,
+                (
+                    ticket_hash,
+                    _serialize_datetime(now),
+                    _serialize_datetime(now),
+                    _serialize_datetime(now),
+                ),
+            )
+            row = await cursor.fetchone()
+            await connection.execute(
+                "DELETE FROM auth_bridge_tickets WHERE ticket_hash = ?", (ticket_hash,)
+            )
+            await connection.commit()
+        if row is None:
+            return None
+        return str(row["bridge_hash"]), int(row["user_id"])
+
+    async def update_session(self, bridge_hash: str, session_id_hash: str) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "UPDATE auth_bridges SET session_id_hash = ? WHERE token_hash = ?",
+                (session_id_hash, bridge_hash),
+            )
+            await connection.commit()
+
+    async def delete_bridge(self, token_hash: str) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "DELETE FROM auth_bridges WHERE token_hash = ?", (token_hash,)
+            )
+            await connection.commit()
+
+    async def delete_for_session(self, session_id_hash: str) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "DELETE FROM auth_bridges WHERE session_id_hash = ?", (session_id_hash,)
+            )
+            await connection.commit()
+
+    async def delete_expired(self, now: datetime) -> None:
+        serialized = _serialize_datetime(now)
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "DELETE FROM auth_bridge_tickets WHERE expires_at <= ?", (serialized,)
+            )
+            await connection.execute(
+                "DELETE FROM auth_bridges WHERE expires_at <= ?", (serialized,)
+            )
+            await connection.commit()

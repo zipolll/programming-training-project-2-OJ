@@ -146,6 +146,135 @@ def test_httponly_cookie_maintains_login_and_logout_invalidates_session(
     assert after_logout.status_code == 401
 
 
+def _bridge_headers() -> dict[str, str]:
+    return {"Origin": "http://localhost:8501", "X-OJ-Bridge": "1"}
+
+
+def _claim_browser_bridge(client: TestClient) -> str:
+    issued = client.post("/api/auth/bridge/issue")
+    token = issued.json()["data"]["token"]
+    claimed = client.post(
+        "/api/auth/bridge/claim", json={"token": token}, headers=_bridge_headers()
+    )
+    assert issued.status_code == claimed.status_code == 200
+    assert "httponly" in claimed.headers["set-cookie"].lower()
+    assert "samesite=strict" in claimed.headers["set-cookie"].lower()
+    return token
+
+
+def _restore_from_browser_bridge(client: TestClient, bridge_token: str) -> dict[str, object]:
+    client.cookies.clear()
+    client.cookies.set("oj_auth_bridge", bridge_token, path="/api/auth/bridge")
+    ticket_response = client.post("/api/auth/bridge/ticket", headers=_bridge_headers())
+    assert ticket_response.status_code == 200
+    ticket = ticket_response.json()["data"]["ticket"]
+    client.cookies.clear()
+    exchanged = client.post("/api/auth/bridge/exchange", json={"ticket": ticket})
+    assert exchanged.status_code == 200
+    return client.get("/api/users/me").json()["data"]
+
+
+@pytest.mark.parametrize(
+    ("username", "password", "role"),
+    [("admin", "admintestpassword", "admin"), ("alice", "secret1", "user")],
+)
+def test_browser_bridge_restores_admin_and_regular_user_after_refresh(
+    auth_client: tuple[TestClient, Path], username: str, password: str, role: str
+) -> None:
+    client, _ = auth_client
+    if username != "admin":
+        assert _register(client, username, password).status_code == 200
+    assert _login(client, username, password).status_code == 200
+    bridge_token = _claim_browser_bridge(client)
+
+    restored = _restore_from_browser_bridge(client, bridge_token)
+
+    assert restored["username"] == username
+    assert restored["role"] == role
+
+
+def test_bridge_ticket_is_one_use_and_requires_csrf_headers(
+    auth_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = auth_client
+    _register(client)
+    _login(client)
+    token = client.post("/api/auth/bridge/issue").json()["data"]["token"]
+
+    assert client.post("/api/auth/bridge/claim", json={"token": token}).status_code == 403
+    assert (
+        client.post(
+            "/api/auth/bridge/claim", json={"token": token}, headers=_bridge_headers()
+        ).status_code
+        == 200
+    )
+    ticket = client.post(
+        "/api/auth/bridge/ticket", headers=_bridge_headers()
+    ).json()["data"]["ticket"]
+    client.cookies.clear()
+    assert client.post("/api/auth/bridge/exchange", json={"ticket": ticket}).status_code == 200
+    client.cookies.clear()
+    assert client.post("/api/auth/bridge/exchange", json={"ticket": ticket}).status_code == 401
+
+
+def test_logout_revokes_browser_refresh(
+    auth_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = auth_client
+    _register(client)
+    _login(client)
+    bridge_token = _claim_browser_bridge(client)
+    assert client.post("/api/auth/logout").status_code == 200
+
+    client.cookies.clear()
+    client.cookies.set("oj_auth_bridge", bridge_token, path="/api/auth/bridge")
+    response = client.post("/api/auth/bridge/ticket", headers=_bridge_headers())
+
+    assert response.status_code == 401
+    assert response.cookies.get("oj_auth_bridge") is None
+
+
+def test_expired_or_banned_bridge_cannot_restore(
+    auth_client: tuple[TestClient, Path],
+) -> None:
+    client, database_path = auth_client
+    _register(client)
+    _login(client)
+    expired_token = _claim_browser_bridge(client)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE sessions SET expires_at = '2000-01-01T00:00:00+00:00'")
+        connection.commit()
+    client.cookies.clear()
+    client.cookies.set("oj_auth_bridge", expired_token, path="/api/auth/bridge")
+    assert client.post("/api/auth/bridge/ticket", headers=_bridge_headers()).status_code == 401
+
+    _login(client)
+    banned_token = _claim_browser_bridge(client)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("UPDATE users SET role = 'banned' WHERE username = 'alice'")
+        connection.commit()
+    client.cookies.clear()
+    client.cookies.set("oj_auth_bridge", banned_token, path="/api/auth/bridge")
+    assert client.post("/api/auth/bridge/ticket", headers=_bridge_headers()).status_code == 401
+
+
+def test_two_browser_bridges_do_not_share_identity(
+    auth_client: tuple[TestClient, Path],
+) -> None:
+    client, _ = auth_client
+    _register(client, "alice", "secret1")
+    _register(client, "bobby", "secret2")
+    _login(client, "alice", "secret1")
+    alice_bridge = _claim_browser_bridge(client)
+    client.cookies.clear()
+    _login(client, "bobby", "secret2")
+    bobby_bridge = _claim_browser_bridge(client)
+
+    assert alice_bridge != bobby_bridge
+    assert _restore_from_browser_bridge(client, alice_bridge)["username"] == "alice"
+    assert _restore_from_browser_bridge(client, bobby_bridge)["username"] == "bobby"
+
+
 def test_regular_user_cannot_use_admin_dependency(
     auth_client: tuple[TestClient, Path],
 ) -> None:

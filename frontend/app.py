@@ -22,7 +22,7 @@ from frontend.pages.submissions import (
     render_submit,
     render_visibility,
 )
-from frontend.session import current_user, get_api_client, restore_identity
+from frontend.session import current_user, get_api_client, restore_identity, sync_browser_auth
 
 
 def render_home() -> None:
@@ -73,6 +73,7 @@ def main() -> None:
     apply_theme()
     api = get_api_client()
     try:
+        sync_browser_auth(api)
         restore_identity(api)
     except Exception as exc:
         show_error(exc)

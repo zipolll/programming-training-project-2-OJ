@@ -9,7 +9,12 @@ from frontend.components.common import show_error
 from frontend.components.ui import badges, info_card, page_header, section_header
 from frontend.errors import ApiError
 from frontend.models import validate_login, validate_registration
-from frontend.session import logout_local, restore_identity, set_auth_user
+from frontend.session import (
+    logout_local,
+    prepare_browser_bridge,
+    restore_identity,
+    set_auth_user,
+)
 
 
 def render_register(api: ApiClient, on_success: Callable[[], None] | None = None) -> None:
@@ -41,6 +46,7 @@ def render_register(api: ApiClient, on_success: Callable[[], None] | None = None
     try:
         api.post("/auth/login", json={"username": username, "password": password})
         user = restore_identity(api)
+        prepare_browser_bridge(api)
     except Exception as exc:
         st.success("注册成功。")
         st.warning("自动登录失败，请前往登录页面重试。")
@@ -77,6 +83,7 @@ def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -
     try:
         api.post("/auth/login", json={"username": username, "password": password})
         user = restore_identity(api)
+        prepare_browser_bridge(api)
     except ApiError as exc:
         if exc.status_code == 403 and "banned" in exc.message.lower():
             st.error("该用户已被禁用，无法登录。")

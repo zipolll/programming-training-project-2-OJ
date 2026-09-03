@@ -12,7 +12,11 @@ from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.users.models import User, UserRole, UserStatistics
-from backend.app.modules.users.repository import SessionRepository, UserRepository
+from backend.app.modules.users.repository import (
+    AuthBridgeRepository,
+    SessionRepository,
+    UserRepository,
+)
 
 INITIAL_ADMIN_USERNAME = "admin"
 INITIAL_ADMIN_PASSWORD = "admintestpassword"
@@ -71,6 +75,7 @@ class AuthService:
     def __init__(self, database: Database, settings: Settings) -> None:
         self.users = UserRepository(database)
         self.sessions = SessionRepository(database)
+        self.bridges = AuthBridgeRepository(database)
         self.settings = settings
 
     async def ensure_initial_admin(self) -> None:
@@ -108,12 +113,58 @@ class AuthService:
         if user.role is UserRole.BANNED:
             raise BannedUserError
 
+        session_id, expires_at = await self.create_session(user.id)
+        return user, session_id, expires_at
+
+    async def create_session(self, user_id: int) -> tuple[str, datetime]:
         now = _utc_now()
         expires_at = now + timedelta(seconds=self.settings.session_max_age_seconds)
         session_id = secrets.token_urlsafe(32)
-        await self.sessions.create(_session_hash(session_id), user.id, now, expires_at)
+        await self.sessions.create(_session_hash(session_id), user_id, now, expires_at)
         await self.sessions.delete_expired(now)
-        return user, session_id, expires_at
+        return session_id, expires_at
+
+    async def issue_bridge(self, session_id: str, user_id: int) -> str:
+        now = _utc_now()
+        token = secrets.token_urlsafe(48)
+        expires_at = now + timedelta(seconds=self.settings.session_bridge_max_age_seconds)
+        await self.bridges.create_bridge(
+            _session_hash(token), _session_hash(session_id), user_id, now, expires_at
+        )
+        await self.bridges.delete_expired(now)
+        return token
+
+    async def claim_bridge(self, token: str) -> bool:
+        return await self.bridges.claim_bridge(_session_hash(token), _utc_now())
+
+    async def issue_bridge_ticket(self, bridge_token: str) -> str | None:
+        now = _utc_now()
+        bridge_hash = _session_hash(bridge_token)
+        user = await self.bridges.get_bridge_user(bridge_hash, now)
+        if user is None or user.role is UserRole.BANNED:
+            await self.bridges.delete_bridge(bridge_hash)
+            return None
+        ticket = secrets.token_urlsafe(32)
+        expires_at = now + timedelta(
+            seconds=self.settings.session_bridge_ticket_ttl_seconds
+        )
+        await self.bridges.create_ticket(
+            _session_hash(ticket), bridge_hash, now, expires_at
+        )
+        return ticket
+
+    async def exchange_bridge_ticket(self, ticket: str) -> tuple[str, datetime] | None:
+        now = _utc_now()
+        consumed = await self.bridges.consume_ticket(_session_hash(ticket), now)
+        if consumed is None:
+            return None
+        bridge_hash, user_id = consumed
+        session_id, expires_at = await self.create_session(user_id)
+        await self.bridges.update_session(bridge_hash, _session_hash(session_id))
+        return session_id, expires_at
+
+    async def revoke_bridge(self, bridge_token: str) -> None:
+        await self.bridges.delete_bridge(_session_hash(bridge_token))
 
     async def get_user_for_session(self, session_id: str) -> User | None:
         now = _utc_now()
@@ -128,7 +179,9 @@ class AuthService:
         return user
 
     async def logout(self, session_id: str) -> None:
-        await self.sessions.delete(_session_hash(session_id))
+        session_hash = _session_hash(session_id)
+        await self.bridges.delete_for_session(session_hash)
+        await self.sessions.delete(session_hash)
 
 
 class UserService:

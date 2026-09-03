@@ -145,19 +145,30 @@ Windows 下也可以双击仓库根目录的 `start_oj.cmd`，或在 PowerShell 
 Streamlit 前设置 `OJ_FRONTEND_API_BASE_URL`，例如 PowerShell 中：
 
 ```powershell
-$env:OJ_FRONTEND_API_BASE_URL = "http://127.0.0.1:8000/api"
+$env:OJ_FRONTEND_API_BASE_URL = "http://localhost:9000/api"
 python -m streamlit run frontend/app.py
 ```
+
+本地运行时请让前端地址和 API 地址使用相同主机名（例如都使用 `localhost`），
+以便浏览器按 `SameSite=Strict` 规则发送恢复 Cookie。
 
 页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
 新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、日志
 可见性管理，以及管理员专用的 AI Agent 智能命题工作台。
 
-所有业务数据均通过 FastAPI 接口读取和修改。统一 `ApiClient` 使用一个内存中的
-`httpx.Client` 保存后端 `Set-Cookie`，Cookie 仅存在当前 Streamlit
-`session_state` 所持有的客户端中，不写入文件、不显示值。每次页面完整刷新都会
-通过后端当前用户接口恢复并校验身份；401 会清除本地身份和 Cookie，403 只提示
-权限不足。普通用户没有管理员导航入口，但最终授权始终由后端决定。
+所有业务数据均通过 FastAPI 接口读取和修改。登录后的 API Session Cookie 只在
+Streamlit 服务端内存客户端中使用；浏览器另持有 FastAPI 设置的 `HttpOnly`、
+`SameSite=Strict` 恢复 Cookie，原始 `session_id` 不会进入 URL、页面脚本、文本、
+日志或本地文件。恢复令牌和 30 秒一次性交换票据在 SQLite 中仅保存 SHA-256
+哈希，并与仍有效的后端 Session 关联。浏览器硬刷新后，隐藏的 Streamlit 双向
+组件通过受限 Origin 和自定义 CSRF 请求头取得一次性票据，服务端交换成功后再
+调用当前用户接口确认身份和角色。不同浏览器使用不同的 HttpOnly Cookie，因此
+不会共享身份。
+
+退出登录会同时撤销后端 Session、恢复令牌和浏览器 Cookie。Session 过期、用户
+被封禁或收到 401 时也会清理恢复状态；403 仅表示当前操作权限不足，不会退出
+正常登录。部署到 HTTPS 时应设置 `OJ_SESSION_COOKIE_SECURE=true`，并将
+`OJ_CORS_ORIGINS` 限制为实际 Streamlit 地址。
 
 Submission 详情在 `pending` 时使用 Streamlit fragment 每秒查询一次；进入
 `success`/`error` 后停止，网络故障时也停止并显示手动重试入口，不使用阻塞

@@ -4,6 +4,7 @@ import json
 import re
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -32,8 +33,10 @@ from frontend.session import (
     current_user,
     get_api_client,
     logout_local,
+    prepare_browser_bridge,
     restore_identity,
     set_auth_user,
+    sync_browser_auth,
 )
 
 
@@ -255,24 +258,64 @@ def test_auth_state_is_explicit_and_logout_clears_cookie() -> None:
     assert current_user(state) is None
 
 
-def test_api_client_survives_streamlit_state_refresh_for_same_browser() -> None:
+def test_new_streamlit_session_does_not_share_server_side_cookie_jar() -> None:
     first_state: dict[str, Any] = {}
     refreshed_state: dict[str, Any] = {}
-    other_browser_state: dict[str, Any] = {}
-    browser_cookie = {"_streamlit_xsrf": "browser-a"}
 
-    first = get_api_client(first_state, browser_cookie)
+    first = get_api_client(first_state)
     first._client.cookies.set("session_id", "secret")
-    refreshed = get_api_client(refreshed_state, browser_cookie)
-    other = get_api_client(other_browser_state, {"_streamlit_xsrf": "browser-b"})
+    refreshed = get_api_client(refreshed_state)
 
-    assert refreshed is first
-    assert refreshed.has_cookies
-    assert other is not first
-    assert not other.has_cookies
+    assert refreshed is not first
+    assert not refreshed.has_cookies
 
-    logout_local(first, refreshed_state)
-    logout_local(other, other_browser_state)
+    logout_local(first, first_state)
+    logout_local(refreshed, refreshed_state)
+
+
+def test_bridge_ticket_restores_cookie_then_authoritative_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/exchange"):
+            return httpx.Response(
+                200,
+                headers={"set-cookie": "session_id=restored; HttpOnly; Path=/"},
+                json={"code": 200, "msg": "session restored", "data": None},
+            )
+        return envelope(data={"id": 7, "username": "alice", "role": "admin"})
+
+    state: dict[str, Any] = {"auth_bridge_nonce": "nonce-a"}
+    monkeypatch.setattr(
+        "frontend.session.mount_auth_bridge",
+        lambda **_: SimpleNamespace(ticket="one-use-ticket", ticket_nonce="nonce-a"),
+    )
+    client = ApiClient("http://test/api", transport=httpx.MockTransport(handler))
+
+    user = sync_browser_auth(client, state)
+
+    assert user == {"id": 7, "username": "alice", "role": "admin"}
+    assert current_user(state) == user
+    assert calls == ["/api/auth/bridge/exchange", "/api/users/me"]
+
+
+def test_prepare_bridge_keeps_claim_ephemeral_in_streamlit_state() -> None:
+    state: dict[str, Any] = {}
+    client = ApiClient(
+        "http://test/api",
+        transport=httpx.MockTransport(
+            lambda _: envelope(data={"token": "opaque-browser-recovery-token"})
+        ),
+    )
+
+    prepare_browser_bridge(client, state)
+
+    assert state["auth_bridge_action"] == "claim"
+    assert state["auth_bridge_claim"] == "opaque-browser-recovery-token"
+    assert "session_id" not in repr(state)
 
 
 def test_login_cookie_restores_authoritative_identity() -> None:
@@ -363,6 +406,7 @@ def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(auth_page.st, "warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page.st, "button", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(auth_page, "restore_identity", lambda _api: {"id": 1, "role": "user"})
+    monkeypatch.setattr(auth_page, "prepare_browser_bridge", lambda _api: None)
     monkeypatch.setattr(auth_page, "set_auth_user", lambda _user: None)
     monkeypatch.setattr(auth_page, "logout_local", lambda _api: transitions.append("cleared"))
     monkeypatch.setattr(
@@ -399,6 +443,7 @@ def test_registration_logs_in_and_uses_navigation_callback(
         "restore_identity",
         lambda _api: {"id": 1, "username": "alice", "role": "user"},
     )
+    monkeypatch.setattr(auth_page, "prepare_browser_bridge", lambda _api: None)
     monkeypatch.setattr(
         auth_page,
         "set_auth_user",
