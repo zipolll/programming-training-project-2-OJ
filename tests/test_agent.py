@@ -183,7 +183,11 @@ def test_provider_url_security(url: str) -> None:
 
 
 def test_missing_encryption_key_does_not_break_oj(tmp_path: Path) -> None:
-    settings = Settings(database_path=tmp_path / "db", problems_path=tmp_path / "problems")
+    settings = Settings(
+        database_path=tmp_path / "db",
+        problems_path=tmp_path / "problems",
+        credential_encryption_key=None,
+    )
     with TestClient(create_app(settings)) as client:
         client.post("/api/auth/login", json={"username": "admin", "password": "admintestpassword"})
         response = client.put("/api/agent/config", json=config_payload())
