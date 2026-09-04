@@ -83,7 +83,8 @@ try {
 
     $frontendArguments = @(
         "-m", "streamlit", "run", "frontend/app.py",
-        "--server.address", "127.0.0.1", "--server.port", "8501"
+        "--server.address", "127.0.0.1", "--server.port", "8501",
+        "--server.headless", "true"
     )
     if ($NoReload) {
         $frontendArguments += @("--server.fileWatcherType", "none")
@@ -95,6 +96,32 @@ try {
         -WorkingDirectory $projectRoot `
         -NoNewWindow `
         -PassThru
+
+    $frontendReady = $false
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        Start-Sleep -Milliseconds 500
+        if ($frontendProcess.HasExited) {
+            throw "Frontend exited during startup (exit code $($frontendProcess.ExitCode))."
+        }
+        try {
+            $response = Invoke-WebRequest `
+                -Uri "http://127.0.0.1:8501/_stcore/health" `
+                -UseBasicParsing `
+                -TimeoutSec 1
+            if ($response.StatusCode -eq 200) {
+                $frontendReady = $true
+                break
+            }
+        }
+        catch {
+            # Streamlit may still be importing the application and building its first session.
+        }
+    }
+    if (-not $frontendReady) {
+        throw "Frontend did not become ready at http://localhost:8501."
+    }
+
+    Start-Process "http://localhost:8501"
 
     Write-Host ""
     Write-Host "OJ is running: http://localhost:8501"
