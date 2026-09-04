@@ -53,9 +53,9 @@ class AgentConfigUpdate(StrictModel):
     input_price_per_million_tokens: Decimal = Field(default=Decimal("0"), ge=0, strict=False)
     output_price_per_million_tokens: Decimal = Field(default=Decimal("0"), ge=0, strict=False)
     currency: str = Field(default="USD", min_length=1, max_length=12)
-    request_timeout: float = Field(default=60.0, gt=0, le=600, allow_inf_nan=False)
+    request_timeout: float = Field(default=360.0, gt=0, le=600, allow_inf_nan=False)
     max_iterations: int = Field(default=3, ge=1, le=10)
-    max_output_tokens: int = Field(default=4096, ge=256, le=128000)
+    max_output_tokens: int = Field(default=16384, ge=256, le=128000)
 
     @field_validator("provider_url")
     @classmethod

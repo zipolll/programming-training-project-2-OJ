@@ -15,7 +15,11 @@ from fastapi.testclient import TestClient
 
 from backend.app.core.config import Settings
 from backend.app.main import create_app
-from backend.app.modules.agent.models import AuthoringRequest, validate_provider_url
+from backend.app.modules.agent.models import (
+    AgentConfigUpdate,
+    AuthoringRequest,
+    validate_provider_url,
+)
 
 FAKE_KEY = "test-provider-key-never-real"
 
@@ -99,6 +103,15 @@ def config_payload(**updates: Any) -> dict[str, Any]:
     }
     payload.update(updates)
     return payload
+
+
+def test_agent_config_defaults_allow_large_structured_problem_output() -> None:
+    config = AgentConfigUpdate(
+        provider_url="https://model.example/v1",
+        model_name="test-model",
+    )
+    assert config.request_timeout == 360.0
+    assert config.max_output_tokens == 16384
 
 
 def authoring_payload() -> dict[str, Any]:

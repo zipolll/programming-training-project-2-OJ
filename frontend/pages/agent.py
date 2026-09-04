@@ -121,14 +121,14 @@ def _config(api: ApiClient) -> None:
         )
         section_header("执行策略", icon="⚙️")
         timeout = st.number_input(
-            "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 60.0))
+            "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 360.0))
         )
         iterations = st.number_input("最大修正轮数", 1, 10, int(current.get("max_iterations", 3)))
         max_tokens = st.number_input(
             "单次最大输出 Token",
             256,
             128000,
-            int(current.get("max_output_tokens", 4096)),
+            int(current.get("max_output_tokens", 16384)),
         )
         saved = st.form_submit_button("保存配置")
     if saved:
