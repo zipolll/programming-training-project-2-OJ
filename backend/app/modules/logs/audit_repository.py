@@ -24,6 +24,7 @@ def _from_row(row: Any) -> AuditLog:
         changes=json.loads(row["changes"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         problem_id=row["problem_id"],
+        actor_username=row["actor_username"],
     )
 
 
@@ -81,8 +82,10 @@ class AuditRepository:
             clauses.append("s.problem_id = ?")
             parameters.append(problem_id)
         sql = (
-            "SELECT a.*, s.problem_id FROM audit_logs AS a "
+            "SELECT a.*, s.problem_id, u.username AS actor_username "
+            "FROM audit_logs AS a "
             "JOIN submissions AS s ON s.submission_id = CAST(a.target_id AS INTEGER) "
+            "LEFT JOIN users AS u ON u.id = a.actor_user_id "
             f"WHERE {' AND '.join(clauses)} ORDER BY a.created_at DESC, a.id DESC"
         )
         if page_size is not None:
@@ -92,3 +95,42 @@ class AuditRepository:
             cursor = await connection.execute(sql, parameters)
             rows = await cursor.fetchall()
         return [_from_row(row) for row in rows]
+
+    async def list_all(
+        self,
+        *,
+        user_id: int | None,
+        action: str | None,
+        success: bool | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[int, list[AuditLog]]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if user_id is not None:
+            clauses.append("a.actor_user_id = ?")
+            parameters.append(user_id)
+        if action is not None:
+            clauses.append("a.action = ?")
+            parameters.append(action)
+        if success is not None:
+            clauses.append("a.success = ?")
+            parameters.append(int(success))
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                f"SELECT COUNT(*) FROM audit_logs AS a{where}", parameters
+            )
+            total_row = await cursor.fetchone()
+            cursor = await connection.execute(
+                "SELECT a.*, s.problem_id, u.username AS actor_username "
+                "FROM audit_logs AS a "
+                "LEFT JOIN users AS u ON u.id = a.actor_user_id "
+                "LEFT JOIN submissions AS s "
+                "ON a.target_type = 'submission' "
+                "AND s.submission_id = CAST(a.target_id AS INTEGER)"
+                f"{where} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?",
+                [*parameters, page_size, (page - 1) * page_size],
+            )
+            rows = await cursor.fetchall()
+        return int(total_row[0]), [_from_row(row) for row in rows]

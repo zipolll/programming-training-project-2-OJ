@@ -19,8 +19,9 @@ OTHER_OPTION = "其它"
 NAVIGATION_LAYOUT = {
     "概览": ("首页",),
     "题目": ("题目列表", "题目管理"),
-    "评测": ("提交记录", "注册新语言", "日志可见性"),
-    "账户": ("注册", "登录", "个人信息", "用户管理", "退出"),
+    "评测": ("提交记录", "注册新语言"),
+    "管理": ("用户管理", "日志可见性", "访问审计"),
+    "账户": ("注册", "登录", "个人信息", "退出"),
 }
 
 NAVIGATION_METADATA = {
@@ -30,6 +31,7 @@ NAVIGATION_METADATA = {
     "提交记录": {"icon": ":material/history:", "url_path": "submissions"},
     "注册新语言": {"icon": ":material/terminal:", "url_path": "languages"},
     "日志可见性": {"icon": ":material/visibility:", "url_path": "log-visibility"},
+    "访问审计": {"icon": ":material/security:", "url_path": "audit"},
     "注册": {"icon": ":material/person_add:", "url_path": "register"},
     "登录": {"icon": ":material/login:", "url_path": "login"},
     "个人信息": {"icon": ":material/person:", "url_path": "profile"},
@@ -142,6 +144,7 @@ def navigation_for(role: str | None) -> list[str]:
     if role == "admin":
         pages.insert(-2, "用户管理")
         pages.insert(-2, "日志可见性")
+        pages.insert(-2, "访问审计")
     return pages
 
 

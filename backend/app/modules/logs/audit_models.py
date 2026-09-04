@@ -16,3 +16,4 @@ class AuditLog:
     changes: dict[str, object]
     created_at: datetime
     problem_id: str | None = None
+    actor_username: str | None = None

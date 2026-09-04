@@ -9,6 +9,7 @@ from frontend.components.theme import apply_theme
 from frontend.components.ui import badges, feature_grid, page_header, section_header
 from frontend.data_access import load_service_status
 from frontend.models import NAVIGATION_METADATA, navigation_sections
+from frontend.pages.audit import render_audit
 from frontend.pages.auth import (
     render_login,
     render_logout,
@@ -156,6 +157,7 @@ def main() -> None:
                 {
                     "用户管理": _page(lambda: render_user_admin(api), "用户管理"),
                     "日志可见性": _page(lambda: render_visibility(api), "日志可见性"),
+                    "访问审计": _page(lambda: render_audit(api), "访问审计"),
                 }
             )
 

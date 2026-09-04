@@ -285,6 +285,50 @@ def test_privileged_actions_are_structurally_audited(
     assert all(secret not in serialized for secret in ("password", "session", "cookie", "print(3)"))
 
 
+def test_admin_can_list_all_audit_events_with_filters_and_pagination(
+    context: tuple[TestClient, FastAPI, Path],
+) -> None:
+    client, _, database_path = context
+    alice_id = _register(client, "alice")
+    _login(client, "alice")
+    assert client.post("/api/problems/", json=_problem()).status_code == 200
+    submission_id = _insert_submission(database_path, user_id=alice_id)
+    assert client.get(f"/api/submissions/{submission_id}/log").status_code == 200
+
+    assert client.get("/api/logs/audit/").status_code == 403
+    _admin(client)
+    assert client.put(
+        "/api/problems/P1/log_visibility", json={"public_cases": True}
+    ).status_code == 200
+
+    first_page = client.get("/api/logs/audit/?page=1&page_size=1")
+    assert first_page.status_code == 200
+    assert first_page.json()["data"]["total"] == 2
+    assert len(first_page.json()["data"]["logs"]) == 1
+    assert first_page.json()["data"]["logs"][0]["action"] == "update_log_visibility"
+
+    views = client.get(
+        f"/api/logs/audit/?user_id={alice_id}&action=view_logs&success=true"
+    )
+    assert views.status_code == 200
+    assert views.json()["data"]["total"] == 1
+    assert views.json()["data"]["logs"] == [
+        {
+            "id": views.json()["data"]["logs"][0]["id"],
+            "user_id": str(alice_id),
+            "username": "alice",
+            "action": "view_logs",
+            "target_type": "submission",
+            "target_id": str(submission_id),
+            "problem_id": "P1",
+            "success": True,
+            "status": 200,
+            "changes": {},
+            "created_at": views.json()["data"]["logs"][0]["created_at"],
+        }
+    ]
+
+
 def test_schema_upgrade_is_idempotent_and_preserves_users(tmp_path: Path) -> None:
     path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as connection:

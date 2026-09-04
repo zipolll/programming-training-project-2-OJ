@@ -52,3 +52,20 @@ class AuditService:
             page=page,
             page_size=page_size,
         )
+
+    async def list_all(
+        self,
+        *,
+        user_id: int | None,
+        action: str | None,
+        success: bool | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[int, list[AuditLog]]:
+        return await self.repository.list_all(
+            user_id=user_id,
+            action=action,
+            success=success,
+            page=page,
+            page_size=page_size,
+        )

@@ -114,7 +114,7 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 
 `GET /api/submissions/{submission_id}/log` 返回当前评测版本的逐测试点 `details`、得分和总分。Submission 详情表示一次任务的总体状态；Evaluation Log 表示该任务当前版本的测试点明细，两者不会混在同一响应中。管理员可通过 `PUT /api/problems/{problem_id}/log_visibility` 持久化设置题目 `public_cases`：默认私有；公开后所有已登录用户可查看该题提交的日志，但仍不能借此读取他人的 Submission 总体结果。
 
-独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、日志可见性变更、角色/封禁变更、管理员重评和题目删除。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
+独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、日志可见性变更、角色/封禁变更、管理员重评、题目删除、AI 配置修改和 AI 题目导入。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录，也可通过分页接口 `GET /api/logs/audit/` 按用户、动作和成功状态查询全部已记录事件。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
 
 数据库初始化会幂等创建 `problem_log_visibility` 和 `audit_logs` 及索引。旧题目没有可见性记录时按私有处理；重复初始化不会删除或重写已有用户、题目、Submission 或测试点结果。
 
@@ -157,7 +157,7 @@ python -m streamlit run frontend/app.py
 
 页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
 新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、日志
-可见性管理，以及登录用户可用的 AI Agent 智能命题工作台。
+可见性管理、管理员访问审计，以及登录用户可用的 AI Agent 智能命题工作台。
 
 所有业务数据均通过 FastAPI 接口读取和修改。登录后的 API Session Cookie 只在
 Streamlit 服务端内存客户端中使用；浏览器另持有 FastAPI 设置的 `HttpOnly`、

@@ -38,6 +38,7 @@ def test_expected_first_stage_endpoints_are_exposed() -> None:
         "/api/auth/logout",
         "/api/languages/",
         "/api/logs/access/",
+        "/api/logs/audit/",
         "/api/problems/",
         "/api/problems/{problem_id}",
         "/api/problems/{problem_id}/log_visibility",

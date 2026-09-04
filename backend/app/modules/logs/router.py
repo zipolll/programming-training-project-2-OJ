@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.modules.logs.audit_models import AuditLog
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.logs.models import LogVisibilityRequest
 from backend.app.modules.logs.service import (
@@ -20,6 +21,22 @@ from backend.app.modules.users.models import User
 router = APIRouter()
 submission_log_router = APIRouter()
 problem_log_router = APIRouter()
+
+
+def _audit_log_data(entry: AuditLog) -> dict[str, object]:
+    return {
+        "id": str(entry.id),
+        "user_id": str(entry.actor_user_id) if entry.actor_user_id is not None else None,
+        "username": entry.actor_username,
+        "action": entry.action,
+        "target_type": entry.target_type,
+        "target_id": entry.target_id,
+        "problem_id": entry.problem_id,
+        "success": entry.success,
+        "status": entry.status,
+        "changes": entry.changes,
+        "created_at": entry.created_at.isoformat(),
+    }
 
 
 async def get_log_service(request: Request) -> EvaluationLogService:
@@ -94,4 +111,30 @@ async def list_log_access(
             }
             for entry in entries
         ]
+    )
+
+
+@router.get("/audit/", response_model=ApiResponse)
+async def list_audit_logs(
+    current_user: Annotated[User, Depends(require_admin)],
+    service: Annotated[AuditService, Depends(get_audit_service)],
+    user_id: Annotated[int | None, Query(ge=1)] = None,
+    action: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    success: bool | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ApiResponse:
+    del current_user
+    total, entries = await service.list_all(
+        user_id=user_id,
+        action=action,
+        success=success,
+        page=page,
+        page_size=page_size,
+    )
+    return ApiResponse(
+        data={
+            "total": total,
+            "logs": [_audit_log_data(entry) for entry in entries],
+        }
     )

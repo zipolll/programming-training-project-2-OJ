@@ -41,6 +41,11 @@ from frontend.models import (
 )
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
+from frontend.pages.audit import (
+    audit_action_text,
+    audit_changes_text,
+    audit_target_text,
+)
 from frontend.pages.languages import LANGUAGE_LOADING_TEXT, validate_language
 from frontend.pages.problems import (
     difficulty_tone,
@@ -810,7 +815,7 @@ def test_navigation_is_role_aware() -> None:
     assert "注册新语言" in regular
     assert "题目管理" in regular
     assert "AI 智能命题" not in regular
-    assert {"用户管理", "日志可见性"} <= set(admin)
+    assert {"用户管理", "日志可见性", "访问审计"} <= set(admin)
 
 
 def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
@@ -830,7 +835,23 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
     assert navigation_sections("user")["题目"] == ["题目列表", "题目管理"]
     assert navigation_sections("user")["评测"] == ["提交记录", "注册新语言"]
     assert navigation_sections("admin")["题目"] == ["题目列表", "题目管理"]
-    assert navigation_sections("admin")["评测"][-1] == "日志可见性"
+    assert navigation_sections("admin")["管理"] == [
+        "用户管理",
+        "日志可见性",
+        "访问审计",
+    ]
+
+
+def test_audit_page_formats_actions_targets_and_safe_changes() -> None:
+    assert audit_action_text("view_logs") == "查看测试点日志"
+    assert audit_action_text("future_action") == "future_action"
+    assert audit_target_text(
+        {"target_type": "submission", "target_id": "12", "problem_id": "P1"}
+    ) == "提交 12 · 题目 P1"
+    assert audit_changes_text({"before": "user", "after": "admin"}) == (
+        '{"before": "user", "after": "admin"}'
+    )
+    assert audit_changes_text({}) == "—"
 
 
 def test_auth_loading_navigation_preserves_every_registered_route(
