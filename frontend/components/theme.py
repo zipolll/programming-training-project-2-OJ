@@ -367,8 +367,8 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
   min-height: 2.5rem;
   color: var(--oj-muted);
   text-align: center;
-  font-size: .86rem;
-  font-weight: 750;
+  font-size: 1.08rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 [class*="_pagination"] [data-testid="stHorizontalBlock"] {
@@ -379,6 +379,16 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
 [class*="_pagination"] [data-testid="stButton"],
 [class*="_pagination"] [data-testid="stMarkdownContainer"] {
   margin: 0;
+}
+[class*="_pagination"] [data-testid="stButton"] {
+  display: flex;
+  justify-content: center;
+}
+[class*="_pagination"] [data-testid="stButton"] button {
+  width: 2.5rem !important;
+  min-width: 2.5rem !important;
+  max-width: 2.5rem !important;
+  padding-inline: 0 !important;
 }
 [class*="_pagination"] [data-baseweb="select"] > div,
 [class*="_pagination"] button {

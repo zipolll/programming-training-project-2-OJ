@@ -434,6 +434,10 @@ def test_paginated_pages_share_compact_table_footer() -> None:
     )
     assert '"<",' in pagination_source
     assert '">",' in pagination_source
+    assert "use_container_width=True" not in pagination_source
+    assert "第 {page}/{pages} 页" in pagination_source
+    assert "width: 2.5rem !important" in GLOBAL_CSS
+    assert "font-size: 1.08rem" in GLOBAL_CSS
 
 
 def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
