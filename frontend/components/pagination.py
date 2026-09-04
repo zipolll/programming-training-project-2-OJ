@@ -47,7 +47,7 @@ def render_pagination(
         reset_pagination(key)
 
     with st.container(key=f"{key}_pagination"):
-        size_col, previous_col, number_col, next_col = st.columns([1.35, 0.22, 0.72, 0.22])
+        size_col, previous_col, number_col, next_col = st.columns(4)
         size_col.selectbox(
             "每页数量",
             list(page_sizes),

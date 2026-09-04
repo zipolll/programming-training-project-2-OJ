@@ -438,6 +438,19 @@ def test_paginated_pages_share_compact_table_footer() -> None:
     assert "第 {page}/{pages} 页" in pagination_source
     assert "width: 2.5rem !important" in GLOBAL_CSS
     assert "font-size: 1.08rem" in GLOBAL_CSS
+    assert "justify-content: center" in GLOBAL_CSS
+    assert "flex-basis: 8.25rem !important" in GLOBAL_CSS
+    assert "gap: .35rem" in GLOBAL_CSS
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0.24868", "0.25"), (0, "0.00"), ("invalid", "0.00")],
+)
+def test_agent_cost_is_displayed_with_two_decimal_places(
+    value: Any, expected: str
+) -> None:
+    assert agent_page.format_cost(value) == expected
 
 
 def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:

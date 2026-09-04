@@ -1,6 +1,7 @@
 """Streamlit AI problem-authoring workflow."""
 
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import streamlit as st
@@ -10,6 +11,7 @@ from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDE
 from frontend.components.ui import (
     badges,
     empty_state,
+    info_card,
     page_header,
     section_header,
     status_badge,
@@ -33,6 +35,34 @@ VIEW_LOADING_TEXT = {
     "创建任务": "正在加载命题选项...",
     "进度与结果": "正在加载任务进度...",
 }
+
+
+def format_cost(value: Any) -> str:
+    """Format model usage cost consistently without exposing raw precision."""
+    try:
+        return f"{Decimal(str(value)):.2f}"
+    except (InvalidOperation, TypeError, ValueError):
+        return "0.00"
+
+
+def _task_overview(task: dict[str, Any]) -> None:
+    """Show enough authoring context to distinguish similar task revisions."""
+    request = task.get("request") or {}
+    knowledge = "、".join(request.get("required_knowledge") or []) or "未填写"
+    overview = st.columns(4)
+    with overview[0]:
+        info_card("题目类型", request.get("problem_type") or "未填写", icon="🧩")
+    with overview[1]:
+        info_card("目标难度", request.get("difficulty") or "未填写", icon="🎯")
+    with overview[2]:
+        info_card("核心知识点", knowledge, icon="🧠")
+    with overview[3]:
+        info_card("任务版本", f"Revision {task.get('revision', 1)}", icon="🔁")
+    created_at = str(task.get("created_at") or "").replace("T", " ")[:19]
+    details = f"任务编号：{task.get('task_id', '未知')}"
+    if created_at:
+        details += f" · 创建时间：{created_at}"
+    st.caption(details)
 
 
 def _config(api: ApiClient) -> None:
@@ -250,8 +280,9 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
     usage[0].metric("输入 Token", task["input_tokens"])
     usage[1].metric("输出 Token", task["output_tokens"])
     usage[2].metric("总 Token", task["total_tokens"])
-    suffix = "（估算）" if task["usage_estimated"] else ""
-    usage[3].metric("费用", f"{task['cost']} {task['currency']} {suffix}")
+    usage[3].metric("费用", f"{format_cost(task['cost'])} {task['currency']}")
+    if task["usage_estimated"]:
+        st.caption("费用与 Token 数量为估算值。")
     generated = task.get("final_problem") or task.get("draft")
     if generated:
         problem = generated["problem"]
@@ -369,6 +400,7 @@ def _task_monitor(api: ApiClient) -> None:
             st.session_state.agent_after_id = merged[-1]["event_id"]
         st.progress(task["progress"] / 100, text=f"{task['stage']} · {task['status']}")
         status_badge(str(task["status"]))
+        _task_overview(task)
         if task["status"] in {"pending", "running"} and st.button("中断任务"):
             try:
                 api.post(f"/agent/tasks/{selected}/cancel")

@@ -373,7 +373,26 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
 }
 [class*="_pagination"] [data-testid="stHorizontalBlock"] {
   align-items: center;
-  gap: .7rem;
+  justify-content: center;
+  gap: .35rem;
+}
+[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
+[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) {
+  flex-basis: 8.25rem !important;
+  width: 8.25rem !important;
+}
+[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
+[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4) {
+  flex-basis: 2.5rem !important;
+  width: 2.5rem !important;
+}
+[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) {
+  flex-basis: 7.25rem !important;
+  width: 7.25rem !important;
 }
 [class*="_pagination"] [data-testid="stSelectbox"],
 [class*="_pagination"] [data-testid="stButton"],
