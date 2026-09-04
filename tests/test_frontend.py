@@ -453,6 +453,53 @@ def test_agent_cost_is_displayed_with_two_decimal_places(
     assert agent_page.format_cost(value) == expected
 
 
+def test_agent_task_overview_hides_empty_optional_fields() -> None:
+    primary, short_optional, long_optional = agent_page.task_overview_fields(
+        {
+            "revision": 2,
+            "request": {
+                "problem_type": "基础编程",
+                "difficulty": "中等",
+                "expected_algorithm": "",
+                "data_scale": "",
+                "forbidden_knowledge": [],
+                "background_preference": "",
+                "additional_requirements": "",
+                "adapt_existing": False,
+            },
+        }
+    )
+    assert [field[0] for field in primary] == ["题目类型", "目标难度", "任务版本"]
+    assert short_optional == []
+    assert long_optional == []
+
+
+def test_agent_task_overview_groups_populated_optional_fields() -> None:
+    _, short_optional, long_optional = agent_page.task_overview_fields(
+        {
+            "request": {
+                "expected_algorithm": "双指针",
+                "data_scale": "n ≤ 100000",
+                "forbidden_knowledge": ["动态规划"],
+                "background_preference": "校园竞赛",
+                "additional_requirements": "避免复杂题面",
+                "adapt_existing": True,
+                "existing_problem_id": "sum-two",
+            }
+        }
+    )
+    assert [field[0] for field in short_optional] == [
+        "期望算法或复杂度",
+        "数据规模",
+        "改编自题目",
+    ]
+    assert [field[0] for field in long_optional] == [
+        "避免使用的知识点",
+        "背景偏好",
+        "补充要求",
+    ]
+
+
 def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
     rendered: list[str] = []
     monkeypatch.setattr(agent_page, "page_header", lambda *_args, **_kwargs: None)

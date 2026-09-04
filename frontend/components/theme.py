@@ -190,6 +190,8 @@ a.anchor-link {
 .oj-info-card { padding: 1rem 1.1rem; margin: .5rem 0; }
 .oj-info-card__label { color: var(--oj-muted); font-size: .76rem; font-weight: 700; }
 .oj-info-card__value { margin-top: .2rem; font-size: 1.08rem; font-weight: 800; }
+.oj-info-card--compact .oj-info-card__label,
+.oj-info-card--compact .oj-info-card__value { white-space: nowrap; }
 .oj-empty { padding: 2rem; text-align: center; color: var(--oj-muted); }
 .oj-empty__icon { display: block; margin-bottom: .5rem; font-size: 2rem; }
 

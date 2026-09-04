@@ -62,11 +62,14 @@ def badges(items: list[tuple[str, str]]) -> None:
     st.markdown(f'<div class="oj-badges">{content}</div>', unsafe_allow_html=True)
 
 
-def info_card(label: str, value: Any, *, icon: str = "") -> None:
+def info_card(
+    label: str, value: Any, *, icon: str = "", compact: bool = False
+) -> None:
+    modifier = " oj-info-card--compact" if compact else ""
     st.markdown(
         _html(
             f"""
-            <div class="oj-info-card">
+            <div class="oj-info-card{modifier}">
               <div class="oj-info-card__label">{_safe(icon)} {_safe(label)}</div>
               <div class="oj-info-card__value">{_safe(value)}</div>
             </div>

@@ -45,19 +45,65 @@ def format_cost(value: Any) -> str:
         return "0.00"
 
 
+def task_overview_fields(
+    task: dict[str, Any],
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """Build primary, short optional, and long optional task fields."""
+    request = task.get("request") or {}
+    primary = [
+        ("题目类型", str(request.get("problem_type") or "未填写"), "🧩"),
+        ("目标难度", str(request.get("difficulty") or "未填写"), "🎯"),
+        ("任务版本", f"Revision {task.get('revision', 1)}", "🔁"),
+    ]
+    short_optional = []
+    for label, key, icon in (
+        ("期望算法或复杂度", "expected_algorithm", "⚙️"),
+        ("数据规模", "data_scale", "📐"),
+    ):
+        value = str(request.get(key) or "").strip()
+        if value:
+            short_optional.append((label, value, icon))
+    existing_problem = str(request.get("existing_problem_id") or "").strip()
+    if request.get("adapt_existing") and existing_problem:
+        short_optional.append(("改编自题目", existing_problem, "📝"))
+
+    long_optional = []
+    forbidden = "、".join(request.get("forbidden_knowledge") or [])
+    if forbidden:
+        long_optional.append(("避免使用的知识点", forbidden, "🚫"))
+    for label, key, icon in (
+        ("背景偏好", "background_preference", "🎨"),
+        ("补充要求", "additional_requirements", "💬"),
+    ):
+        value = str(request.get(key) or "").strip()
+        if value:
+            long_optional.append((label, value, icon))
+    return primary, short_optional, long_optional
+
+
 def _task_overview(task: dict[str, Any]) -> None:
     """Show enough authoring context to distinguish similar task revisions."""
     request = task.get("request") or {}
     knowledge = "、".join(request.get("required_knowledge") or []) or "未填写"
-    overview = st.columns(4)
-    with overview[0]:
-        info_card("题目类型", request.get("problem_type") or "未填写", icon="🧩")
-    with overview[1]:
-        info_card("目标难度", request.get("difficulty") or "未填写", icon="🎯")
-    with overview[2]:
-        info_card("核心知识点", knowledge, icon="🧠")
-    with overview[3]:
-        info_card("任务版本", f"Revision {task.get('revision', 1)}", icon="🔁")
+    primary, short_optional, long_optional = task_overview_fields(task)
+    overview = st.columns(len(primary))
+    for column, (label, value, icon) in zip(overview, primary, strict=True):
+        with column:
+            info_card(label, value, icon=icon, compact=True)
+    info_card("核心知识点", knowledge, icon="🧠")
+
+    if short_optional or long_optional:
+        section_header("更多命题要求", icon="🧰")
+    if short_optional:
+        optional_columns = st.columns(len(short_optional))
+        for column, (label, value, icon) in zip(
+            optional_columns, short_optional, strict=True
+        ):
+            with column:
+                info_card(label, value, icon=icon, compact=True)
+    for label, value, icon in long_optional:
+        info_card(label, value, icon=icon)
+
     created_at = str(task.get("created_at") or "").replace("T", " ")[:19]
     details = f"任务编号：{task.get('task_id', '未知')}"
     if created_at:
