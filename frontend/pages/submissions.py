@@ -6,7 +6,6 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import (
-    OPTIONAL_PLACEHOLDER,
     REQUIRED_PLACEHOLDER,
     render_status,
     show_error,
@@ -16,10 +15,38 @@ from frontend.components.pagination import (
     render_pagination,
     reset_pagination,
 )
+from frontend.components.submission_table import render_submission_table
 from frontend.components.ui import badges, empty_state, page_header, section_header
-from frontend.data_access import load_submission_options
+from frontend.data_access import load_problem_summaries, load_submission_options
 from frontend.errors import NetworkError
 from frontend.models import should_poll, status_text
+from frontend.session_cache import cached_for_session
+
+MY_SUBMISSIONS = "我的提交"
+STATUS_FILTERS = {
+    "全部状态": None,
+    "等待评测": "pending",
+    "评测完成": "success",
+    "评测异常": "error",
+}
+
+
+def resolve_submission_user_id(
+    selection: str, users: list[dict[str, Any]], own_user_id: int
+) -> int | None:
+    """Resolve an admin username selection without sending usernames to the API."""
+    if selection == MY_SUBMISSIONS:
+        return own_user_id
+    normalized = selection.strip().casefold()
+    for candidate in users:
+        if str(candidate.get("username") or "").casefold() == normalized:
+            return int(candidate["user_id"])
+    return None
+
+
+def _select_submission(submission_id: str) -> None:
+    st.session_state["selected_submission_id"] = submission_id
+    st.session_state["submission_polling"] = False
 
 
 def render_submit(api: ApiClient) -> None:
@@ -184,42 +211,67 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
 
     def filters_changed() -> None:
         reset_pagination("submission_list")
+        st.session_state.pop("selected_submission_id", None)
 
-    left, middle, right = st.columns(3)
-    problem_id = left.text_input(
-        "题目 ID 筛选",
-        placeholder=OPTIONAL_PLACEHOLDER,
-        key="submission_problem_filter",
-        on_change=filters_changed,
-    )
-    status = middle.selectbox(
-        "状态筛选",
-        ["全部", "pending", "success", "error"],
-        key="submission_status_filter",
-        on_change=filters_changed,
-    )
-    user_id = right.text_input(
-        "用户 ID 筛选",
-        value="" if is_admin else str(user["id"]),
-        disabled=not is_admin,
-        placeholder=OPTIONAL_PLACEHOLDER,
-        key=f"submission_user_filter_{'admin' if is_admin else user['id']}",
-        on_change=filters_changed,
-    )
-    page, page_size = pagination_values("submission_list")
-    params: dict[str, Any] = {"page": page, "page_size": page_size}
-    if problem_id.strip():
-        params["problem_id"] = problem_id.strip()
-    if user_id.strip():
-        if not user_id.strip().isdigit() or int(user_id) < 1:
-            st.error("用户 ID 只能填写正整数。")
-            return
-        params["user_id"] = int(user_id)
-    if status != "全部":
-        params["status"] = status
-    if "problem_id" not in params and "user_id" not in params:
-        st.info("请至少填写题目 ID 或用户 ID。")
+    try:
+        problems = load_problem_summaries(api.base_url, api)
+    except Exception as exc:
+        show_error(exc)
         return
+    problem_labels = {str(item["id"]): f"{item['id']} · {item['title']}" for item in problems}
+    filter_columns = st.columns(3 if is_admin else 2)
+    problem_id = filter_columns[0].selectbox(
+        "题目",
+        ["", *problem_labels],
+        format_func=lambda value: "全部题目" if not value else problem_labels[value],
+        key="submission_problem_filter_v2",
+        on_change=filters_changed,
+    )
+    status_label = filter_columns[1].selectbox(
+        "状态",
+        list(STATUS_FILTERS),
+        key="submission_status_filter_v2",
+        on_change=filters_changed,
+    )
+    own_user_id = int(user["id"])
+    user_id: int | None = own_user_id
+    if is_admin:
+        try:
+            user_result = cached_for_session(
+                "submission_filter_users",
+                lambda: api.get("/users/", params={"page": 1, "page_size": 1000})[
+                    "data"
+                ],
+            )
+        except Exception as exc:
+            show_error(exc)
+            return
+        users = list(user_result.get("users", []))
+        usernames = [str(item["username"]) for item in users]
+        selected_username = filter_columns[2].selectbox(
+            "用户",
+            [MY_SUBMISSIONS, *usernames],
+            key="submission_username_filter_admin",
+            accept_new_options=True,
+            help="可从列表选择，也可以直接输入完整用户名。",
+            on_change=filters_changed,
+        )
+        user_id = resolve_submission_user_id(selected_username, users, own_user_id)
+        if user_id is None:
+            st.error("未找到该用户，请检查用户名。")
+            return
+
+    page, page_size = pagination_values("submission_list")
+    params: dict[str, Any] = {
+        "page": page,
+        "page_size": page_size,
+        "user_id": user_id,
+    }
+    if problem_id:
+        params["problem_id"] = problem_id
+    status = STATUS_FILTERS[status_label]
+    if status:
+        params["status"] = status
     try:
         data = api.get("/submissions/", params=params)["data"]
     except Exception as exc:
@@ -232,20 +284,20 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
         render_pagination("submission_list", total=int(data.get("total", 0)))
         return
     badges([(f"共 {data.get('total', 0)} 条", "cyan"), (f"第 {page} 页", "orange")])
-    rows = [
-        {
-            "提交编号": item["submission_id"],
-            "状态": status_text(item["status"]),
-            "得分": item.get("score", "—"),
-            "总分": item.get("counts", "—"),
-        }
-        for item in submissions
-    ]
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    render_submission_table(
+        submissions,
+        key="history",
+        on_select=_select_submission,
+    )
     render_pagination("submission_list", total=int(data.get("total", 0)))
-    selected = st.selectbox("查看详情", [item["submission_id"] for item in submissions])
-    st.session_state["selected_submission_id"] = selected
-    render_submission_detail(api, selected, is_admin)
+    selected = st.session_state.get("selected_submission_id")
+    if selected:
+        section_header("提交详情", icon="🔍")
+        if st.button("关闭详情"):
+            st.session_state.pop("selected_submission_id", None)
+            st.session_state["submission_polling"] = False
+            st.rerun()
+        render_submission_detail(api, str(selected), is_admin)
 
 
 def render_visibility(api: ApiClient) -> None:

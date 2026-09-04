@@ -241,6 +241,39 @@ a.anchor-link {
   outline-offset: 3px;
 }
 
+[class*="problem_statement"] {
+  background: #ffffff !important;
+  color: #111827 !important;
+}
+[class*="problem_statement"] p,
+[class*="problem_statement"] li,
+[class*="problem_statement"] h1,
+[class*="problem_statement"] h2,
+[class*="problem_statement"] h3,
+[class*="problem_statement"] h4 { color: #111827 !important; }
+[class*="submission_catalog"] [data-testid="stHorizontalBlock"] {
+  align-items: center;
+  padding: .48rem .65rem;
+  border-bottom: 1px solid var(--oj-line);
+}
+[class*="submission_catalog"] [data-testid="stButton"] button {
+  min-height: auto;
+  padding: .12rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--oj-primary);
+  box-shadow: none;
+  font-weight: 750;
+}
+[class*="submission_catalog"] [data-testid="stButton"] button:hover {
+  color: var(--oj-primary-dark);
+  background: transparent;
+  box-shadow: none;
+  text-decoration: underline;
+  transform: none;
+}
+[class*="submission_catalog"] .oj-badges { margin: 0; }
+
 .oj-timeline {
   position: relative;
   margin: .35rem 0 .35rem .45rem;

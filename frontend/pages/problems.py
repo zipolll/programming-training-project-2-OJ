@@ -6,9 +6,19 @@ from typing import Any
 import streamlit as st
 
 from frontend.api_client import ApiClient
-from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
+from frontend.components.common import (
+    OPTIONAL_PLACEHOLDER,
+    REQUIRED_PLACEHOLDER,
+    render_status,
+    show_error,
+)
+from frontend.components.submission_table import render_submission_table
 from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
-from frontend.data_access import invalidate_problem_cache, load_problem_summaries
+from frontend.data_access import (
+    invalidate_problem_cache,
+    load_language_names,
+    load_problem_summaries,
+)
 from frontend.models import build_problem_payload, validate_problem
 
 PROBLEM_QUERY_KEY = "problem"
@@ -61,7 +71,70 @@ def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
         return None
 
 
-def render_problem_detail(api: ApiClient, problem_id: str) -> None:
+def _render_problem_submission_tools(
+    api: ApiClient, problem: dict[str, Any], user: dict[str, Any]
+) -> None:
+    section_header("快捷提交", icon="💻")
+    try:
+        languages = load_language_names(api.base_url, api)
+    except Exception as exc:
+        show_error(exc)
+        languages = []
+    if languages:
+        with st.form(f"problem_submission_{problem['id']}"):
+            language = st.selectbox("语言", languages)
+            code = st.text_area(
+                "代码",
+                height=320,
+                placeholder=REQUIRED_PLACEHOLDER,
+                help="请按照题目的输入输出要求编写完整代码。",
+            )
+            submitted = st.form_submit_button("提交评测", type="primary")
+        if submitted:
+            if not code.strip():
+                st.error("请输入代码。")
+            else:
+                try:
+                    result = api.post(
+                        "/submissions/",
+                        json={
+                            "problem_id": problem["id"],
+                            "language": language,
+                            "code": code,
+                        },
+                    )["data"]
+                except Exception as exc:
+                    show_error(exc)
+                else:
+                    st.session_state["selected_submission_id"] = result["submission_id"]
+                    st.session_state["submission_polling"] = True
+                    st.success(f"提交成功，编号：{result['submission_id']}")
+                    render_status(result["status"])
+
+    section_header("我的递交历史", icon="📜")
+    try:
+        history = api.get(
+            "/submissions/",
+            params={
+                "user_id": int(user["id"]),
+                "problem_id": problem["id"],
+                "page": 1,
+                "page_size": 5,
+            },
+        )["data"]
+    except Exception as exc:
+        show_error(exc)
+        return
+    submissions = history.get("submissions", [])
+    if submissions:
+        render_submission_table(submissions, key=f"problem_{problem['id']}")
+    else:
+        empty_state("你还没有提交过这道题。", icon="📭")
+
+
+def render_problem_detail(
+    api: ApiClient, problem_id: str, user: dict[str, Any]
+) -> None:
     st.button("← 返回题目列表", on_click=_close_problem)
     with st.spinner("正在加载题目详情..."):
         problem = _load_problem(api, problem_id)
@@ -91,7 +164,7 @@ def render_problem_detail(api: ApiClient, problem_id: str) -> None:
     with memory_col:
         info_card("内存限制", f"{problem['memory_limit']} MB", icon="💾")
 
-    with st.container(border=True):
+    with st.container(border=True, key="problem_statement"):
         section_header("题目描述", icon="📖")
         st.markdown(problem["description"])
         section_header("输入说明", icon="📥")
@@ -112,12 +185,13 @@ def render_problem_detail(api: ApiClient, problem_id: str) -> None:
         if problem.get("hint"):
             with st.expander("查看提示"):
                 st.markdown(problem["hint"])
+    _render_problem_submission_tools(api, problem, user)
 
 
-def render_problem_list(api: ApiClient) -> None:
+def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
     requested_problem = _requested_problem_id()
     if requested_problem:
-        render_problem_detail(api, requested_problem)
+        render_problem_detail(api, requested_problem, user)
         return
 
     page_header(

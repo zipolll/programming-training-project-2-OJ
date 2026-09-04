@@ -127,7 +127,7 @@ def main() -> None:
     else:
         renderers.update(
             {
-                "题目列表": _page(lambda: render_problem_list(api), "题目列表"),
+                "题目列表": _page(lambda: render_problem_list(api, user), "题目列表"),
                 "题目管理": _page(
                     lambda: render_problem_management(api, role == "admin"), "题目管理"
                 ),

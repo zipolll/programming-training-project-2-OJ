@@ -14,6 +14,7 @@ from frontend import app as frontend_app
 from frontend.api_client import ApiClient
 from frontend.components import ui
 from frontend.components.pagination import page_count
+from frontend.components.submission_table import submission_outcome
 from frontend.components.theme import GLOBAL_CSS
 from frontend.data_access import (
     load_language_names,
@@ -36,6 +37,7 @@ from frontend.models import (
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
 from frontend.pages.problems import filter_problem_summaries
+from frontend.pages.submissions import resolve_submission_user_id
 from frontend.session import (
     auth_resolution_pending,
     browser_bridge_base_url,
@@ -283,6 +285,37 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
     assert [
         item["id"] for item in filter_problem_summaries(problems, difficulty="困难")
     ] == ["P1002"]
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        ({"status": "pending"}, ("等待评测", "cyan oj-badge--pending")),
+        ({"status": "error"}, ("评测异常", "orange")),
+        (
+            {"status": "success", "score": 100, "counts": 100},
+            ("答案正确（AC）", "green"),
+        ),
+        (
+            {"status": "success", "score": 70, "counts": 100},
+            ("未完全通过", "red"),
+        ),
+    ],
+)
+def test_submission_summary_has_accessible_colored_outcomes(
+    item: dict[str, Any], expected: tuple[str, str]
+) -> None:
+    assert submission_outcome(item) == expected
+
+
+def test_admin_submission_filter_resolves_username_to_user_id() -> None:
+    users = [
+        {"user_id": "2", "username": "alice"},
+        {"user_id": "3", "username": "Bob"},
+    ]
+    assert resolve_submission_user_id("我的提交", users, 1) == 1
+    assert resolve_submission_user_id("bob", users, 1) == 3
+    assert resolve_submission_user_id("missing", users, 1) is None
 
 
 def test_problem_validation_rejects_invalid_complete_form() -> None:
