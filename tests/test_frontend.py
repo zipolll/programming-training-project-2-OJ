@@ -46,6 +46,7 @@ from frontend.session import (
     set_auth_user,
     sync_browser_auth,
 )
+from frontend.session_cache import cached_for_session, clear_session_cache
 
 
 def envelope(status: int = 200, data: Any = None, msg: str = "success") -> httpx.Response:
@@ -90,10 +91,14 @@ def test_cookie_is_saved_sent_and_cleared_on_401() -> None:
         assert "session_id=secret" in request.headers["cookie"]
         return envelope(401, msg="login required")
 
+    state: dict[str, Any] = {"_oj_session_cache": {"profile:1": (0.0, {"id": 1})}}
     client = ApiClient(
         "http://test/api",
         transport=httpx.MockTransport(handler),
-        on_unauthorized=lambda: unauthorized.append(True),
+        on_unauthorized=lambda: (
+            unauthorized.append(True),
+            clear_session_cache(state=state),
+        ),
     )
     client.post("/login")
     assert client.has_cookies
@@ -101,6 +106,7 @@ def test_cookie_is_saved_sent_and_cleared_on_401() -> None:
         client.get("/me")
     assert not client.has_cookies
     assert unauthorized == [True]
+    assert "_oj_session_cache" not in state
 
 
 def test_403_preserves_cookie_and_identity_callback() -> None:
@@ -261,9 +267,11 @@ def test_auth_state_is_explicit_and_logout_clears_cookie() -> None:
     assert current_user(state) is None
     client = ApiClient("http://test/api", transport=httpx.MockTransport(lambda _: envelope()))
     client._client.cookies.set("session_id", "secret")
+    state["_oj_session_cache"] = {"profile:1": (0.0, {"private": True})}
     logout_local(client, state)
     assert not client.has_cookies
     assert current_user(state) is None
+    assert "_oj_session_cache" not in state
 
 
 def test_new_streamlit_session_does_not_share_server_side_cookie_jar() -> None:
@@ -394,6 +402,23 @@ def test_compact_pagination_page_count(
     assert page_count(total, page_size) == expected
 
 
+def test_private_page_data_uses_short_per_session_cache() -> None:
+    state: dict[str, Any] = {}
+    calls = 0
+
+    def load() -> dict[str, int]:
+        nonlocal calls
+        calls += 1
+        return {"revision": calls}
+
+    assert cached_for_session("profile:1", load, state=state, now=10) == {"revision": 1}
+    assert cached_for_session("profile:1", load, state=state, now=14) == {"revision": 1}
+    assert cached_for_session("profile:1", load, state=state, now=16) == {"revision": 2}
+    clear_session_cache("profile:", state)
+    assert cached_for_session("profile:1", load, state=state, now=17) == {"revision": 3}
+    assert calls == 3
+
+
 def test_paginated_pages_share_compact_table_footer() -> None:
     frontend = Path(__file__).parents[1] / "frontend"
     auth_source = (frontend / "pages" / "auth.py").read_text(encoding="utf-8")
@@ -404,6 +429,11 @@ def test_paginated_pages_share_compact_table_footer() -> None:
     assert 'render_pagination("user_admin", total=total)' in auth_source
     assert 'render_pagination("submission_list", total=' in submission_source
     assert 'number_input("页码"' not in auth_source + submission_source
+    pagination_source = (frontend / "components" / "pagination.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"<",' in pagination_source
+    assert '">",' in pagination_source
 
 
 def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -677,7 +707,7 @@ def test_admin_profile_uses_admin_identity_header(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page.st, "columns", lambda count: [Column() for _ in range(count)])
 
-    auth_page.render_profile(StubApi(), {"id": 1})
+    auth_page.render_profile(StubApi(), {"id": 1, "role": "admin"})
 
     assert headers == [("管理员中心", {"icon": "🛡️", "eyebrow": "ADMIN ACCOUNT"})]
 
@@ -717,6 +747,8 @@ def test_visual_theme_has_required_tokens_and_accessibility_rules() -> None:
     assert '[data-testid="stheaderactionelements"]' in normalized
     assert "input::placeholder" in normalized
     assert "font-style: italic" in normalized
+    assert 'button[data-testid="stbasebutton-primary"]' in normalized
+    assert '[data-testid="stsegmentedcontrol"] button[aria-pressed="true"]' in normalized
 
 
 def test_visual_components_escape_dynamic_html(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -772,6 +804,11 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
     source = Path(agent_page.__file__).read_text(encoding="utf-8")
     assert 'with st.expander("高级设置（选填）")' in source
     assert '"期望算法或复杂度",\n                placeholder=OPTIONAL_PLACEHOLDER' in source
+    assert agent_page.VIEW_LOADING_TEXT == {
+        "模型配置": "正在加载模型配置...",
+        "创建任务": "正在加载命题选项...",
+        "进度与结果": "正在加载任务进度...",
+    }
 
 
 def test_status_badges_use_distinct_accessible_classes(
