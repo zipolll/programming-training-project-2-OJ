@@ -55,5 +55,7 @@ def render_submission_table(
             label, tone = submission_outcome(item)
             with row[1]:
                 badges([(label, tone)])
-            row[2].write(item.get("score") if item.get("score") is not None else "—")
-            row[3].write(item.get("counts") if item.get("counts") is not None else "—")
+            score = item.get("score") if item.get("score") is not None else "—"
+            counts = item.get("counts") if item.get("counts") is not None else "—"
+            row[2].markdown(f"<div class='oj-result-number'>{score}</div>", unsafe_allow_html=True)
+            row[3].markdown(f"<div class='oj-result-number'>{counts}</div>", unsafe_allow_html=True)

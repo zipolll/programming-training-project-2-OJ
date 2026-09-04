@@ -16,6 +16,10 @@ FIELD_LABELS = {
     "samples": "样例",
     "testcases": "测试点",
     "language": "语言",
+    "name": "语言名称",
+    "file_ext": "源文件扩展名",
+    "compile_cmd": "编译命令",
+    "run_cmd": "运行命令",
     "code": "代码",
     "provider_url": "服务地址",
     "model_name": "模型名称",
@@ -50,6 +54,8 @@ MESSAGE_TRANSLATIONS = {
     "task is not eligible for import": "当前任务还不能导入题库。",
     "invalid problem id": "题目 ID 格式不正确，请检查后重试。",
     "problem id does not match path": "题目 ID 与当前题目不一致。",
+    "language already exists": "该语言已经注册，无需重复添加。",
+    "invalid language configuration": "语言配置有误，请检查命令和占位符。",
 }
 
 

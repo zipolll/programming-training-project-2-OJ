@@ -16,10 +16,10 @@ from frontend.pages.auth import (
     render_register,
     render_user_admin,
 )
+from frontend.pages.languages import render_language_registration
 from frontend.pages.problems import render_problem_list, render_problem_management
 from frontend.pages.submissions import (
     render_submission_list,
-    render_submit,
     render_visibility,
 )
 from frontend.session import (
@@ -132,9 +132,11 @@ def main() -> None:
             {
                 "题目列表": _page(lambda: render_problem_list(api, user), "题目列表"),
                 "题目管理": problem_management_page,
-                "提交代码": _page(lambda: render_submit(api), "提交代码"),
                 "提交记录": _page(
                     lambda: render_submission_list(api, user, role == "admin"), "提交记录"
+                ),
+                "注册新语言": _page(
+                    lambda: render_language_registration(api), "注册新语言"
                 ),
                 "个人信息": _page(lambda: render_profile(api, user), "个人信息"),
                 "退出": _page(lambda: render_logout(api, return_home), "退出"),

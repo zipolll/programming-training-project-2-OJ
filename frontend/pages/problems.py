@@ -12,6 +12,7 @@ from frontend.components.common import (
     render_status,
     show_error,
 )
+from frontend.components.pagination import pagination_values, render_pagination, reset_pagination
 from frontend.components.submission_table import render_submission_table
 from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
 from frontend.data_access import (
@@ -27,7 +28,7 @@ PROBLEM_QUERY_KEY = "problem"
 
 def problem_detail_actions(role: str | None) -> list[str]:
     """Return only actions authorized by the current role."""
-    actions = ["编辑"] if role in {"user", "admin"} else []
+    actions = ["提交", "编辑"] if role in {"user", "admin"} else []
     if role == "admin":
         actions.append("删除")
     return actions
@@ -66,6 +67,7 @@ def _requested_problem_id() -> str:
 def _open_problem(problem_id: str) -> None:
     st.query_params[PROBLEM_QUERY_KEY] = problem_id
     st.session_state.pop("problem_detail_action", None)
+    st.session_state.pop("problem_submission_selected", None)
 
 
 def _close_problem() -> None:
@@ -75,7 +77,10 @@ def _close_problem() -> None:
 
 
 def _select_detail_action(action: str) -> None:
-    st.session_state["problem_detail_action"] = action
+    if action:
+        st.session_state["problem_detail_action"] = action
+    else:
+        st.session_state.pop("problem_detail_action", None)
 
 
 def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
@@ -89,7 +94,13 @@ def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
 def _render_problem_submission_tools(
     api: ApiClient, problem: dict[str, Any], user: dict[str, Any]
 ) -> None:
-    section_header("快捷提交", icon="💻")
+    page_header(
+        f"提交 · {problem['title']}",
+        "选择语言并提交你的解法。",
+        icon="⚡",
+        eyebrow=f"PROBLEM {problem['id']}",
+    )
+    section_header("代码与运行环境", icon="💻")
     try:
         languages = load_language_names(api.base_url, api)
     except Exception as exc:
@@ -121,7 +132,9 @@ def _render_problem_submission_tools(
                 except Exception as exc:
                     show_error(exc)
                 else:
-                    st.session_state["selected_submission_id"] = result["submission_id"]
+                    st.session_state["problem_submission_selected"] = result[
+                        "submission_id"
+                    ]
                     st.session_state["submission_polling"] = True
                     st.success(f"提交成功，编号：{result['submission_id']}")
                     render_status(result["status"])
@@ -142,9 +155,26 @@ def _render_problem_submission_tools(
         return
     submissions = history.get("submissions", [])
     if submissions:
-        render_submission_table(submissions, key=f"problem_{problem['id']}")
+        render_submission_table(
+            submissions,
+            key=f"problem_{problem['id']}",
+            on_select=lambda submission_id: st.session_state.update(
+                problem_submission_selected=submission_id,
+                submission_polling=False,
+            ),
+        )
     else:
         empty_state("你还没有提交过这道题。", icon="📭")
+    selected = st.session_state.get("problem_submission_selected")
+    if selected:
+        from frontend.pages.submissions import render_submission_detail
+
+        render_submission_detail(
+            api,
+            str(selected),
+            str(user.get("role")) == "admin",
+            show_heading=True,
+        )
 
 
 def render_problem_detail(
@@ -152,11 +182,70 @@ def render_problem_detail(
     problem_id: str,
     user: dict[str, Any],
 ) -> None:
-    st.button("← 返回题目列表", on_click=_close_problem)
     with st.spinner("正在加载题目详情..."):
         problem = _load_problem(api, problem_id)
     if problem is None:
         return
+    role = str(user.get("role") or "")
+    detail_action = st.session_state.get("problem_detail_action")
+    if detail_action in {"提交", "编辑", "删除"}:
+        st.button(
+            "← 返回题目详情",
+            on_click=_select_detail_action,
+            args=("",),
+        )
+        if detail_action == "提交":
+            _render_problem_submission_tools(api, problem, user)
+            return
+        if detail_action == "编辑" and role in {"user", "admin"}:
+            page_header(
+                f"编辑 · {problem['title']}",
+                "修改后保存完整题目内容。",
+                icon="✏️",
+                eyebrow=f"PROBLEM {problem['id']}",
+            )
+            payload = _problem_form(problem, f"detail_edit_{problem['id']}")
+            if payload is not None:
+                errors = validate_problem(payload)
+                if errors:
+                    for message in errors:
+                        st.error(message)
+                else:
+                    try:
+                        api.put(f"/problems/{problem['id']}", json=payload)
+                    except Exception as exc:
+                        show_error(exc)
+                    else:
+                        invalidate_problem_cache()
+                        st.success("题目保存成功。")
+            return
+        if detail_action == "删除" and role == "admin":
+            page_header(
+                f"删除 · {problem['title']}",
+                "请确认是否永久删除这道题目。",
+                icon="🗑️",
+                eyebrow=f"PROBLEM {problem['id']}",
+            )
+            st.warning("删除后无法恢复，请确认当前题目不再需要。")
+            confirmed = st.checkbox(
+                "我确认永久删除该题目。", key=f"detail_delete_confirm_{problem['id']}"
+            )
+            if st.button(
+                "确认删除", type="primary", disabled=not confirmed,
+                key=f"detail_delete_{problem['id']}",
+            ):
+                try:
+                    api.delete(f"/problems/{problem['id']}")
+                except Exception as exc:
+                    show_error(exc)
+                else:
+                    invalidate_problem_cache()
+                    _close_problem()
+                    st.session_state["problem_notice"] = "题目删除成功。"
+                    st.rerun()
+            return
+
+    st.button("← 返回题目列表", on_click=_close_problem)
     subtitle = " · ".join(
         value
         for value in (problem.get("source"), problem.get("author"))
@@ -175,18 +264,22 @@ def render_problem_detail(
     if metadata:
         badges(metadata)
 
-    role = str(user.get("role") or "")
     actions = problem_detail_actions(role)
     if actions:
-        action_columns = st.columns([1, 1, 6])
+        action_columns = st.columns([1, 1, 1, 5])
         action_columns[0].button(
-            "编辑题目",
+            "去提交",
             type="primary",
+            on_click=_select_detail_action,
+            args=("提交",),
+        )
+        action_columns[1].button(
+            "编辑题目",
             on_click=_select_detail_action,
             args=("编辑",),
         )
         if "删除" in actions:
-            action_columns[1].button(
+            action_columns[2].button(
                 "删除题目",
                 on_click=_select_detail_action,
                 args=("删除",),
@@ -220,46 +313,6 @@ def render_problem_detail(
             with st.expander("查看提示"):
                 st.markdown(problem["hint"])
 
-    detail_action = st.session_state.get("problem_detail_action")
-    if detail_action == "编辑":
-        section_header("编辑题目", icon="✏️")
-        payload = _problem_form(problem, f"detail_edit_{problem['id']}")
-        if payload is not None:
-            errors = validate_problem(payload)
-            if errors:
-                for message in errors:
-                    st.error(message)
-            else:
-                try:
-                    api.put(f"/problems/{problem['id']}", json=payload)
-                except Exception as exc:
-                    show_error(exc)
-                else:
-                    invalidate_problem_cache()
-                    st.success("题目保存成功。")
-    elif detail_action == "删除" and role == "admin":
-        section_header("确认删除", icon="🚨")
-        st.warning("删除后无法恢复，请确认当前题目不再需要。")
-        confirmed = st.checkbox(
-            "我确认永久删除该题目。",
-            key=f"detail_delete_confirm_{problem['id']}",
-        )
-        if st.button(
-            "确认删除",
-            type="primary",
-            disabled=not confirmed,
-            key=f"detail_delete_{problem['id']}",
-        ):
-            try:
-                api.delete(f"/problems/{problem['id']}")
-            except Exception as exc:
-                show_error(exc)
-            else:
-                invalidate_problem_cache()
-                _close_problem()
-                st.session_state["problem_notice"] = "题目删除成功。"
-                st.rerun()
-    _render_problem_submission_tools(api, problem, user)
 
 
 def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
@@ -288,16 +341,23 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
         empty_state("题库暂时为空，稍后再来挑战吧。", icon="📚")
         return
     section_header("筛选题目", icon="🔎")
+    def filters_changed() -> None:
+        reset_pagination("problem_list")
+
     search_col, difficulty_col = st.columns([2, 1])
     search = search_col.text_input(
         "关键词",
         placeholder="输入题号、名称、标签或来源",
+        key="problem_list_search",
+        on_change=filters_changed,
     )
     difficulties = sorted(
         {str(item.get("difficulty")) for item in problems if item.get("difficulty")}
     )
     selected_difficulty = difficulty_col.selectbox(
-        "难度", ["全部难度", *difficulties]
+        "难度", ["全部难度", *difficulties],
+        key="problem_list_difficulty",
+        on_change=filters_changed,
     )
     filtered = filter_problem_summaries(
         problems,
@@ -309,13 +369,16 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
         empty_state("没有找到符合条件的题目，请调整筛选条件。", icon="🔍")
         return
 
+    page, page_size = pagination_values("problem_list")
+    start = (page - 1) * page_size
+    visible = filtered[start : start + page_size]
     with st.container(key="problem_catalog"):
         header = st.columns([1.1, 3.2, 2.3, 1])
         header[0].markdown("**题号**")
         header[1].markdown("**题目名称**")
         header[2].markdown("**标签**")
         header[3].markdown("**难度**")
-        for problem in filtered:
+        for problem in visible:
             row = st.columns([1.1, 3.2, 2.3, 1])
             row[0].write(problem["id"])
             row[1].button(
@@ -327,6 +390,7 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
             )
             row[2].write(" · ".join(str(tag) for tag in problem.get("tags") or []) or "—")
             row[3].write(problem.get("difficulty") or "—")
+    render_pagination("problem_list", total=len(filtered))
 
 
 def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[dict[str, str]]:

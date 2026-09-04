@@ -1,10 +1,8 @@
-"""Compact, reusable pagination controls for Streamlit tables."""
-
-from collections.abc import Sequence
+"""Reusable numbered pagination controls for Streamlit tables."""
 
 import streamlit as st
 
-DEFAULT_PAGE_SIZES = (10, 20, 50)
+DEFAULT_PAGE_SIZE = 10
 
 
 def page_count(total: int, page_size: int) -> int:
@@ -12,17 +10,24 @@ def page_count(total: int, page_size: int) -> int:
     return max(1, (max(0, total) + page_size - 1) // page_size)
 
 
+def page_window(page: int, pages: int, *, limit: int = 5) -> list[int]:
+    """Return a compact, stable window of nearby page numbers."""
+    pages = max(1, pages)
+    page = min(max(1, page), pages)
+    width = min(max(1, limit), pages)
+    start = max(1, min(page - width // 2, pages - width + 1))
+    return list(range(start, start + width))
+
+
 def pagination_values(
     key: str,
     *,
-    default_page_size: int = 10,
+    default_page_size: int = DEFAULT_PAGE_SIZE,
 ) -> tuple[int, int]:
     """Read the requested page without making or caching any API request."""
     page_key = f"{key}_page"
-    size_key = f"{key}_page_size"
     st.session_state.setdefault(page_key, 1)
-    st.session_state.setdefault(size_key, default_page_size)
-    return max(1, int(st.session_state[page_key])), int(st.session_state[size_key])
+    return max(1, int(st.session_state[page_key])), default_page_size
 
 
 def reset_pagination(key: str) -> None:
@@ -30,49 +35,46 @@ def reset_pagination(key: str) -> None:
     st.session_state[f"{key}_page"] = 1
 
 
-def render_pagination(
-    key: str,
-    *,
-    total: int,
-    page_sizes: Sequence[int] = DEFAULT_PAGE_SIZES,
-) -> None:
-    """Render one aligned row and rerun only when the requested page changes."""
-    page, page_size = pagination_values(key, default_page_size=int(page_sizes[0]))
+def _set_page(key: str, page: int) -> None:
+    st.session_state[f"{key}_page"] = page
+
+
+def render_pagination(key: str, *, total: int) -> None:
+    """Render first, nearby pages, next, last and the current-page summary."""
+    page, page_size = pagination_values(key)
     pages = page_count(total, page_size)
     if page > pages:
         st.session_state[f"{key}_page"] = pages
         st.rerun()
 
-    def page_size_changed() -> None:
-        reset_pagination(key)
-
+    numbers = page_window(page, pages)
+    widths = [1.15, *([0.62] * len(numbers)), 0.62, 1.15, 1.65]
     with st.container(key=f"{key}_pagination"):
-        size_col, previous_col, number_col, next_col = st.columns(4)
-        size_col.selectbox(
-            "每页数量",
-            list(page_sizes),
-            key=f"{key}_page_size",
-            format_func=lambda value: f"{value} 条/页",
-            label_visibility="collapsed",
-            on_change=page_size_changed,
+        columns = st.columns(widths)
+        cursor = 0
+        columns[cursor].button(
+            "首页", key=f"{key}_first", disabled=page == 1,
+            on_click=_set_page, args=(key, 1),
         )
-        if previous_col.button(
-            "<",
-            key=f"{key}_previous",
-            disabled=page <= 1,
-            help="上一页",
-        ):
-            st.session_state[f"{key}_page"] = page - 1
-            st.rerun()
-        number_col.markdown(
-            f"<div class='oj-page-number'>第 {page}/{pages} 页</div>",
+        cursor += 1
+        for number in numbers:
+            columns[cursor].button(
+                str(number), key=f"{key}_page_{number}",
+                type="primary" if number == page else "secondary",
+                on_click=_set_page, args=(key, number),
+            )
+            cursor += 1
+        columns[cursor].button(
+            ">", key=f"{key}_next", disabled=page >= pages, help="下一页",
+            on_click=_set_page, args=(key, page + 1),
+        )
+        cursor += 1
+        columns[cursor].button(
+            "末页", key=f"{key}_last", disabled=page == pages,
+            on_click=_set_page, args=(key, pages),
+        )
+        cursor += 1
+        columns[cursor].markdown(
+            f"<div class='oj-page-number'>第 {page} / {pages} 页</div>",
             unsafe_allow_html=True,
         )
-        if next_col.button(
-            ">",
-            key=f"{key}_next",
-            disabled=page >= pages,
-            help="下一页",
-        ):
-            st.session_state[f"{key}_page"] = page + 1
-            st.rerun()

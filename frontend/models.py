@@ -8,7 +8,7 @@ PROBLEM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 NAVIGATION_LAYOUT = {
     "概览": ("首页",),
     "题目": ("题目列表", "题目管理"),
-    "评测": ("提交代码", "提交记录", "日志可见性"),
+    "评测": ("提交记录", "注册新语言", "日志可见性"),
     "账户": ("注册", "登录", "个人信息", "用户管理", "退出"),
 }
 
@@ -16,8 +16,8 @@ NAVIGATION_METADATA = {
     "首页": {"icon": ":material/home:", "url_path": "home"},
     "题目列表": {"icon": ":material/list_alt:", "url_path": "problems"},
     "题目管理": {"icon": ":material/edit_document:", "url_path": "problem-management"},
-    "提交代码": {"icon": ":material/code:", "url_path": "submit"},
     "提交记录": {"icon": ":material/history:", "url_path": "submissions"},
+    "注册新语言": {"icon": ":material/terminal:", "url_path": "languages"},
     "日志可见性": {"icon": ":material/visibility:", "url_path": "log-visibility"},
     "注册": {"icon": ":material/person_add:", "url_path": "register"},
     "登录": {"icon": ":material/login:", "url_path": "login"},
@@ -107,8 +107,8 @@ def navigation_for(role: str | None) -> list[str]:
         "首页",
         "题目列表",
         "题目管理",
-        "提交代码",
         "提交记录",
+        "注册新语言",
         "个人信息",
         "退出",
     ]

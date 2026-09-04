@@ -42,3 +42,7 @@ def load_submission_options(api: ApiClient) -> tuple[list[dict[str, Any]], list[
 
 def invalidate_problem_cache() -> None:
     load_problem_summaries.clear()
+
+
+def invalidate_language_cache() -> None:
+    load_language_names.clear()

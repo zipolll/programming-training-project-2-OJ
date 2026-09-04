@@ -13,7 +13,7 @@ import pytest
 from frontend import app as frontend_app
 from frontend.api_client import ApiClient
 from frontend.components import ui
-from frontend.components.pagination import page_count
+from frontend.components.pagination import page_count, page_window
 from frontend.components.submission_table import submission_outcome
 from frontend.components.theme import GLOBAL_CSS
 from frontend.data_access import (
@@ -36,6 +36,7 @@ from frontend.models import (
 )
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
+from frontend.pages.languages import validate_language
 from frontend.pages.problems import filter_problem_summaries, problem_detail_actions
 from frontend.pages.submissions import resolve_submission_user_id
 from frontend.session import (
@@ -289,13 +290,24 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
 
 def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
     assert problem_detail_actions(None) == []
-    assert problem_detail_actions("user") == ["编辑"]
-    assert problem_detail_actions("admin") == ["编辑", "删除"]
+    assert problem_detail_actions("user") == ["提交", "编辑"]
+    assert problem_detail_actions("admin") == ["提交", "编辑", "删除"]
     source = Path(__file__).parents[1] / "frontend" / "pages" / "problems.py"
     content = source.read_text(encoding="utf-8")
     assert 'section_header("新建普通题目"' in content
     assert 'options = ["新增", "编辑", "删除"]' not in content
     assert "我确认永久删除该题目。" in content
+
+
+def test_language_registration_requires_core_execution_fields() -> None:
+    assert validate_language({"name": "", "file_ext": "", "run_cmd": ""}) == [
+        "请输入语言名称。",
+        "请输入源文件扩展名。",
+        "请输入运行命令。",
+    ]
+    assert validate_language(
+        {"name": "java", "file_ext": ".java", "run_cmd": "java {src}"}
+    ) == []
 
 
 @pytest.mark.parametrize(
@@ -509,14 +521,17 @@ def test_paginated_pages_share_compact_table_footer() -> None:
     pagination_source = (frontend / "components" / "pagination.py").read_text(
         encoding="utf-8"
     )
-    assert '"<",' in pagination_source
+    assert '"首页"' in pagination_source
     assert '">",' in pagination_source
+    assert '"末页"' in pagination_source
+    assert "selectbox" not in pagination_source
     assert "use_container_width=True" not in pagination_source
-    assert "第 {page}/{pages} 页" in pagination_source
-    assert "width: 2.5rem !important" in GLOBAL_CSS
+    assert "第 {page} / {pages} 页" in pagination_source
+    assert page_window(1, 10) == [1, 2, 3, 4, 5]
+    assert page_window(9, 10) == [6, 7, 8, 9, 10]
+    assert "width: fit-content" in GLOBAL_CSS
     assert "font-size: 1.08rem" in GLOBAL_CSS
     assert "justify-content: center" in GLOBAL_CSS
-    assert "flex-basis: 8.25rem !important" in GLOBAL_CSS
     assert "gap: .35rem" in GLOBAL_CSS
 
 
@@ -691,7 +706,8 @@ def test_navigation_is_role_aware() -> None:
     admin = navigation_for("admin")
     assert "登录" in anonymous and "提交代码" not in anonymous
     assert "题目列表" not in anonymous
-    assert "提交代码" in regular and "用户管理" not in regular
+    assert "提交代码" not in regular and "用户管理" not in regular
+    assert "注册新语言" in regular
     assert "题目管理" in regular
     assert "AI 智能命题" not in regular
     assert {"用户管理", "日志可见性"} <= set(admin)
@@ -712,7 +728,7 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
         "账户": ["注册", "登录"],
     }
     assert navigation_sections("user")["题目"] == ["题目列表", "题目管理"]
-    assert navigation_sections("user")["评测"] == ["提交代码", "提交记录"]
+    assert navigation_sections("user")["评测"] == ["提交记录", "注册新语言"]
     assert navigation_sections("admin")["题目"] == ["题目列表", "题目管理"]
     assert navigation_sections("admin")["评测"][-1] == "日志可见性"
 
@@ -891,8 +907,8 @@ def test_problem_management_contains_only_creation_modes() -> None:
     assert 'section_header("新建普通题目", icon="📝")' in source
     assert 'label_visibility="collapsed"' in source
     assert 'section_header("操作", icon="🎛️")' not in source
-    assert 'section_header("编辑题目", icon="✏️")' in source
-    assert 'section_header("确认删除", icon="🚨")' in source
+    assert 'f"编辑 · {problem[\'title\']}"' in source
+    assert 'f"删除 · {problem[\'title\']}"' in source
     assert "我确认永久删除该题目。" in source
 
 

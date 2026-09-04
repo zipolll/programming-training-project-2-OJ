@@ -29,6 +29,7 @@ STATUS_FILTERS = {
     "评测完成": "success",
     "评测异常": "error",
 }
+SUBMISSION_QUERY_KEY = "submission"
 
 
 def resolve_submission_user_id(
@@ -45,8 +46,14 @@ def resolve_submission_user_id(
 
 
 def _select_submission(submission_id: str) -> None:
-    st.session_state["selected_submission_id"] = submission_id
+    st.query_params[SUBMISSION_QUERY_KEY] = submission_id
     st.session_state["submission_polling"] = False
+
+
+def _close_submission() -> None:
+    st.session_state["submission_polling"] = False
+    if SUBMISSION_QUERY_KEY in st.query_params:
+        del st.query_params[SUBMISSION_QUERY_KEY]
 
 
 def render_submit(api: ApiClient) -> None:
@@ -99,13 +106,14 @@ def render_submit(api: ApiClient) -> None:
 
 
 def _render_detail_data(data: dict[str, Any]) -> None:
-    section_header(
-        f"提交 #{data['submission_id']}",
-        icon="🏁",
-    )
-    render_status(data.get("status"))
-    if data.get("score") is not None:
-        st.metric("得分", f"{data['score']} / {data.get('counts', '—')}")
+    status = str(data.get("status") or "")
+    finished = "已完成评测" if status in {"success", "error"} else "评测进行中"
+    section_header(f"提交 #{data['submission_id']}", icon="🏁")
+    summary = st.columns(3)
+    summary[0].metric("评测状态", finished)
+    summary[1].metric("得分", data.get("score") if data.get("score") is not None else "—")
+    summary[2].metric("总分", data.get("counts") if data.get("counts") is not None else "—")
+    render_status(status)
     compile_info = data.get("compile_info")
     if compile_info:
         with st.expander("编译信息", expanded=compile_info.get("result") == "error"):
@@ -118,16 +126,14 @@ def _render_detail_data(data: dict[str, Any]) -> None:
             st.code(data["error_info"], language=None)
 
 
-def _fetch_and_render_detail(api: ApiClient, submission_id: str) -> str | None:
+def _fetch_and_render_detail(api: ApiClient, submission_id: str) -> dict[str, Any]:
     data = api.get(f"/submissions/{submission_id}")["data"]
     _render_detail_data(data)
-    return data.get("status")
+    return data
 
 
 def _render_log(api: ApiClient, submission_id: str) -> None:
     section_header("测试点日志", icon="🔬")
-    if not st.button("查看测试点日志", key=f"log_{submission_id}"):
-        return
     try:
         data = api.get(f"/submissions/{submission_id}/log")["data"]
     except Exception as exc:
@@ -137,20 +143,33 @@ def _render_log(api: ApiClient, submission_id: str) -> None:
     if not details:
         empty_state("暂时没有测试点日志。", icon="🧪")
     else:
-        rows = [
-            {
-                "测试点": item["id"],
-                "结果": status_text(item["result"]),
-                "时间（秒）": item["time"],
-                "内存（MB）": item["memory"],
-                "错误摘要": item.get("error_summary", ""),
-            }
-            for item in details
-        ]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        with st.container(key=f"testcase_results_{submission_id}"):
+            header = st.columns([.7, 1.7, 1, 1, 2])
+            for column, label in zip(
+                header, ("测试点", "结果", "时间", "内存", "评测信息"), strict=True
+            ):
+                column.markdown(f"**{label}**")
+            for item in details:
+                row = st.columns([.7, 1.7, 1, 1, 2])
+                row[0].markdown(f"**{item['id']}**")
+                result = str(item["result"])
+                tone = "green" if result == "AC" else "red"
+                with row[1]:
+                    badges([(status_text(result), tone)])
+                row[2].write(f"{item['time']:.3f} 秒")
+                row[3].write(f"{item['memory']:.2f} MB")
+                row[4].write(item.get("error_summary") or "—")
 
 
-def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool) -> None:
+def render_submission_detail(
+    api: ApiClient,
+    submission_id: str,
+    is_admin: bool,
+    *,
+    show_heading: bool = False,
+) -> None:
+    if show_heading:
+        section_header("评测结果", icon="📋")
     polling = bool(st.session_state.get("submission_polling", False))
 
     if polling:
@@ -158,7 +177,7 @@ def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool)
         @st.fragment(run_every=1.0)
         def poll_fragment() -> None:
             try:
-                status = _fetch_and_render_detail(api, submission_id)
+                data = _fetch_and_render_detail(api, submission_id)
             except NetworkError as exc:
                 st.session_state["submission_polling"] = False
                 show_error(exc)
@@ -168,24 +187,25 @@ def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool)
                 st.session_state["submission_polling"] = False
                 show_error(exc)
                 return
-            if not should_poll(status):
+            if not should_poll(data.get("status")):
                 st.session_state["submission_polling"] = False
                 st.rerun()
 
         poll_fragment()
     else:
         try:
-            status = _fetch_and_render_detail(api, submission_id)
+            data = _fetch_and_render_detail(api, submission_id)
         except Exception as exc:
             show_error(exc)
             return
-        if should_poll(status) and st.button("启动自动刷新"):
+        if should_poll(data.get("status")) and st.button("启动自动刷新"):
             st.session_state["submission_polling"] = True
             st.rerun()
         if st.button("刷新一次"):
             st.rerun()
 
-    _render_log(api, submission_id)
+    if not polling and not should_poll(data.get("status")):
+        _render_log(api, submission_id)
     if is_admin:
         section_header("管理员操作", icon="🛡️")
         confirmed = st.checkbox("我确认重新评测该提交。", key=f"rejudge_confirm_{submission_id}")
@@ -201,6 +221,17 @@ def render_submission_detail(api: ApiClient, submission_id: str, is_admin: bool)
 
 
 def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool) -> None:
+    requested_submission = str(st.query_params.get(SUBMISSION_QUERY_KEY, "")).strip()
+    if requested_submission:
+        st.button("← 返回提交记录", on_click=_close_submission)
+        page_header(
+            f"评测详情 #{requested_submission}",
+            "查看本次提交的得分与各测试点结果。",
+            icon="🏁",
+            eyebrow="JUDGE DETAILS",
+        )
+        render_submission_detail(api, requested_submission, is_admin)
+        return
     page_header(
         "评测战绩",
         "筛选历史提交，复盘每一次等待、通过与错误。",
@@ -211,7 +242,6 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
 
     def filters_changed() -> None:
         reset_pagination("submission_list")
-        st.session_state.pop("selected_submission_id", None)
 
     try:
         problems = load_problem_summaries(api.base_url, api)
@@ -290,14 +320,6 @@ def render_submission_list(api: ApiClient, user: dict[str, Any], is_admin: bool)
         on_select=_select_submission,
     )
     render_pagination("submission_list", total=int(data.get("total", 0)))
-    selected = st.session_state.get("selected_submission_id")
-    if selected:
-        section_header("提交详情", icon="🔍")
-        if st.button("关闭详情"):
-            st.session_state.pop("selected_submission_id", None)
-            st.session_state["submission_polling"] = False
-            st.rerun()
-        render_submission_detail(api, str(selected), is_admin)
 
 
 def render_visibility(api: ApiClient) -> None:
