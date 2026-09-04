@@ -278,10 +278,39 @@ a.anchor-link {
   outline-offset: 3px;
   box-shadow: 0 0 0 5px rgba(6,182,212,.12) !important;
 }
-.stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] button[kind="primary"] {
+.stButton > button[kind="primary"],
+[data-testid="stFormSubmitButton"] button[kind="primary"],
+button[data-testid="stBaseButton-primary"],
+button[data-testid="stBaseButton-primaryFormSubmit"] {
   color: #fff;
   border: 0;
   background: linear-gradient(115deg, var(--oj-primary), #7c3aed);
+}
+button[data-testid="stBaseButton-primary"]:hover,
+button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+  color: #fff;
+  background: linear-gradient(115deg, var(--oj-primary-dark), #6d28d9);
+}
+[data-testid="stSegmentedControl"] {
+  margin: .35rem 0 1rem;
+}
+[data-testid="stSegmentedControl"] button {
+  min-height: 2.65rem;
+  border-color: var(--oj-line) !important;
+  color: #344054 !important;
+  background: rgba(255,255,255,.9) !important;
+  box-shadow: none !important;
+  font-weight: 750;
+}
+[data-testid="stSegmentedControl"] button:hover {
+  color: var(--oj-primary-dark) !important;
+  background: #f5f3ff !important;
+}
+[data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+  border-color: rgba(91,92,240,.35) !important;
+  color: #3730a3 !important;
+  background: #eef2ff !important;
+  box-shadow: inset 0 -3px 0 var(--oj-primary) !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
   gap: 1.4rem;

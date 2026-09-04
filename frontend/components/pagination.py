@@ -47,7 +47,7 @@ def render_pagination(
         reset_pagination(key)
 
     with st.container(key=f"{key}_pagination"):
-        size_col, previous_col, number_col, next_col = st.columns([1.2, 1, 1.05, 1])
+        size_col, previous_col, number_col, next_col = st.columns([1.35, 0.55, 0.9, 0.55])
         size_col.selectbox(
             "每页数量",
             list(page_sizes),
@@ -57,10 +57,11 @@ def render_pagination(
             on_change=page_size_changed,
         )
         if previous_col.button(
-            "上一页",
+            "<",
             key=f"{key}_previous",
             disabled=page <= 1,
             use_container_width=True,
+            help="上一页",
         ):
             st.session_state[f"{key}_page"] = page - 1
             st.rerun()
@@ -69,10 +70,11 @@ def render_pagination(
             unsafe_allow_html=True,
         )
         if next_col.button(
-            "下一页",
+            ">",
             key=f"{key}_next",
             disabled=page >= pages,
             use_container_width=True,
+            help="下一页",
         ):
             st.session_state[f"{key}_page"] = page + 1
             st.rerun()

@@ -28,6 +28,11 @@ PROBLEM_TYPES = [
     "图论",
     "动态规划",
 ]
+VIEW_LOADING_TEXT = {
+    "模型配置": "正在加载模型配置...",
+    "创建任务": "正在加载命题选项...",
+    "进度与结果": "正在加载任务进度...",
+}
 
 
 def _config(api: ApiClient) -> None:
@@ -395,9 +400,13 @@ def render_agent(api: ApiClient) -> None:
         label_visibility="collapsed",
         key="agent_active_view",
     )
-    if selected_view == "模型配置":
-        _config(api)
-    elif selected_view == "创建任务":
-        _authoring_form(api)
-    else:
-        _task_monitor(api)
+    view = selected_view or "模型配置"
+    content = st.empty()
+    content.empty()
+    with content.container(), st.spinner(VIEW_LOADING_TEXT[view]):
+        if view == "模型配置":
+            _config(api)
+        elif view == "创建任务":
+            _authoring_form(api)
+        else:
+            _task_monitor(api)
