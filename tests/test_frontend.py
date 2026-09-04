@@ -35,6 +35,7 @@ from frontend.models import (
 )
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
+from frontend.pages.problems import filter_problem_summaries
 from frontend.session import (
     auth_resolution_pending,
     browser_bridge_base_url,
@@ -251,6 +252,37 @@ def test_problem_payload_multiple_samples_and_testcases() -> None:
     assert len(payload["samples"]) == len(payload["testcases"]) == 2
     assert payload["tags"] == ["math"]
     assert validate_problem(payload) == []
+
+
+def test_problem_catalog_filters_public_summary_fields() -> None:
+    problems = [
+        {
+            "id": "P1001",
+            "title": "前缀和入门",
+            "difficulty": "简单",
+            "tags": ["数组", "前缀和"],
+            "source": "训练营",
+            "author": "teacher",
+        },
+        {
+            "id": "P1002",
+            "title": "最短路",
+            "difficulty": "困难",
+            "tags": ["图论"],
+            "source": "校赛",
+            "author": "coach",
+        },
+    ]
+
+    assert [item["id"] for item in filter_problem_summaries(problems, "前缀和")] == [
+        "P1001"
+    ]
+    assert [item["id"] for item in filter_problem_summaries(problems, "校赛")] == [
+        "P1002"
+    ]
+    assert [
+        item["id"] for item in filter_problem_summaries(problems, difficulty="困难")
+    ] == ["P1002"]
 
 
 def test_problem_validation_rejects_invalid_complete_form() -> None:

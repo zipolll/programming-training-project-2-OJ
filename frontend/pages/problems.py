@@ -1,5 +1,6 @@
 """Problem browsing and complete problem editing forms."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import streamlit as st
@@ -9,6 +10,47 @@ from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDE
 from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
 from frontend.data_access import invalidate_problem_cache, load_problem_summaries
 from frontend.models import build_problem_payload, validate_problem
+
+PROBLEM_QUERY_KEY = "problem"
+
+
+def filter_problem_summaries(
+    problems: Sequence[dict[str, Any]], query: str = "", difficulty: str = ""
+) -> list[dict[str, Any]]:
+    """Filter cached public problem metadata without another API request."""
+    needle = query.strip().casefold()
+    selected_difficulty = difficulty.strip()
+    filtered = []
+    for problem in problems:
+        if selected_difficulty and str(problem.get("difficulty") or "") != selected_difficulty:
+            continue
+        searchable = " ".join(
+            [
+                str(problem.get("id") or ""),
+                str(problem.get("title") or ""),
+                str(problem.get("source") or ""),
+                str(problem.get("author") or ""),
+                *(str(tag) for tag in problem.get("tags") or []),
+            ]
+        ).casefold()
+        if needle and needle not in searchable:
+            continue
+        filtered.append(dict(problem))
+    return filtered
+
+
+def _requested_problem_id() -> str:
+    value = st.query_params.get(PROBLEM_QUERY_KEY, "")
+    return str(value).strip()
+
+
+def _open_problem(problem_id: str) -> None:
+    st.query_params[PROBLEM_QUERY_KEY] = problem_id
+
+
+def _close_problem() -> None:
+    if PROBLEM_QUERY_KEY in st.query_params:
+        del st.query_params[PROBLEM_QUERY_KEY]
 
 
 def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
@@ -20,53 +62,64 @@ def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
 
 
 def render_problem_detail(api: ApiClient, problem_id: str) -> None:
-    problem = _load_problem(api, problem_id)
+    st.button("← 返回题目列表", on_click=_close_problem)
+    with st.spinner("正在加载题目详情..."):
+        problem = _load_problem(api, problem_id)
     if problem is None:
         return
-    section_header(
-        f"{problem['id']} · {problem['title']}",
-        icon="🎯",
-    )
-    meta = " · ".join(
+    subtitle = " · ".join(
         value
-        for value in (
-            problem.get("difficulty"),
-            problem.get("author"),
-            problem.get("source"),
-        )
+        for value in (problem.get("source"), problem.get("author"))
         if value
     )
+    page_header(
+        problem["title"],
+        subtitle or "阅读题目要求，设计并提交你的解法。",
+        icon="🎯",
+        eyebrow=f"PROBLEM {problem['id']}",
+    )
     metadata = []
-    if meta:
-        metadata.append((meta, "cyan"))
+    if problem.get("difficulty"):
+        metadata.append((str(problem["difficulty"]), "orange"))
     metadata.extend((str(tag), "orange") for tag in problem.get("tags", []))
     if metadata:
         badges(metadata)
-    st.markdown(problem["description"])
-    section_header("输入说明", icon="📥")
-    st.markdown(problem["input_description"])
-    section_header("输出说明", icon="📤")
-    st.markdown(problem["output_description"])
-    section_header("样例", icon="🧪")
-    for index, sample in enumerate(problem["samples"], 1):
-        left, right = st.columns(2)
-        left.code(sample["input"], language=None)
-        right.code(sample["output"], language=None)
-        left.caption(f"样例 {index} 输入")
-        right.caption(f"样例 {index} 输出")
-    section_header("约束与限制", icon="⏱️")
-    st.markdown(problem["constraints"])
+
     time_col, memory_col = st.columns(2)
     with time_col:
         info_card("时间限制", f"{problem['time_limit']} 秒", icon="⏱️")
     with memory_col:
         info_card("内存限制", f"{problem['memory_limit']} MB", icon="💾")
-    if problem.get("hint"):
-        st.info(problem["hint"])
-    st.caption("隐藏测试点不会在题目详情页展示。")
+
+    with st.container(border=True):
+        section_header("题目描述", icon="📖")
+        st.markdown(problem["description"])
+        section_header("输入说明", icon="📥")
+        st.markdown(problem["input_description"])
+        section_header("输出说明", icon="📤")
+        st.markdown(problem["output_description"])
+        section_header("约束", icon="📐")
+        st.markdown(problem["constraints"])
+
+        section_header("样例", icon="🧪")
+        for index, sample in enumerate(problem["samples"], 1):
+            st.markdown(f"#### 样例 {index}")
+            left, right = st.columns(2)
+            left.caption("输入")
+            left.code(sample["input"], language=None)
+            right.caption("输出")
+            right.code(sample["output"], language=None)
+        if problem.get("hint"):
+            with st.expander("查看提示"):
+                st.markdown(problem["hint"])
 
 
 def render_problem_list(api: ApiClient) -> None:
+    requested_problem = _requested_problem_id()
+    if requested_problem:
+        render_problem_detail(api, requested_problem)
+        return
+
     page_header(
         "挑战题库",
         "选择一道题目，阅读要求并开始你的下一次 AC。",
@@ -83,13 +136,46 @@ def render_problem_list(api: ApiClient) -> None:
     if not problems:
         empty_state("题库暂时为空，稍后再来挑战吧。", icon="📚")
         return
-    badges([(f"共 {len(problems)} 道题", "cyan"), ("选择后自动加载详情", "green")])
-    selected = st.selectbox(
-        "选择题目查看详情",
-        problems,
-        format_func=lambda item: f"{item['id']} · {item['title']}",
+    section_header("筛选题目", icon="🔎")
+    search_col, difficulty_col = st.columns([2, 1])
+    search = search_col.text_input(
+        "关键词",
+        placeholder="输入题号、名称、标签或来源",
     )
-    render_problem_detail(api, selected["id"])
+    difficulties = sorted(
+        {str(item.get("difficulty")) for item in problems if item.get("difficulty")}
+    )
+    selected_difficulty = difficulty_col.selectbox(
+        "难度", ["全部难度", *difficulties]
+    )
+    filtered = filter_problem_summaries(
+        problems,
+        search,
+        "" if selected_difficulty == "全部难度" else selected_difficulty,
+    )
+    badges([(f"共 {len(filtered)} 道题", "cyan")])
+    if not filtered:
+        empty_state("没有找到符合条件的题目，请调整筛选条件。", icon="🔍")
+        return
+
+    with st.container(key="problem_catalog"):
+        header = st.columns([1.1, 3.2, 2.3, 1])
+        header[0].markdown("**题号**")
+        header[1].markdown("**题目名称**")
+        header[2].markdown("**标签**")
+        header[3].markdown("**难度**")
+        for problem in filtered:
+            row = st.columns([1.1, 3.2, 2.3, 1])
+            row[0].write(problem["id"])
+            row[1].button(
+                str(problem["title"]),
+                key=f"open_problem_{problem['id']}",
+                on_click=_open_problem,
+                args=(str(problem["id"]),),
+                help=f"查看 {problem['title']} 的题目详情",
+            )
+            row[2].write(" · ".join(str(tag) for tag in problem.get("tags") or []) or "—")
+            row[3].write(problem.get("difficulty") or "—")
 
 
 def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[dict[str, str]]:
