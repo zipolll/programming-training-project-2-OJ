@@ -217,9 +217,12 @@ a.anchor-link {
 
 [class*="problem_catalog"] [data-testid="stHorizontalBlock"] {
   align-items: center;
-  padding: .52rem .7rem;
+  min-height: 2.35rem;
+  padding: .1rem .7rem;
   border-bottom: 1px solid var(--oj-line);
 }
+[class*="problem_catalog"][data-testid="stVerticalBlock"] { gap: 0 !important; }
+[class*="problem_catalog"] [data-testid="stVerticalBlock"] { gap: 0 !important; }
 [class*="problem_catalog"] [data-testid="stButton"] button {
   min-height: auto;
   padding: .15rem 0;
@@ -241,7 +244,10 @@ a.anchor-link {
   outline: 3px solid rgba(91,92,240,.25);
   outline-offset: 3px;
 }
-[class*="problem_catalog"] .oj-badges { margin: 0; }
+[class*="problem_catalog"] .oj-badges {
+  margin: 0;
+  transform: translateY(-.45rem);
+}
 
 [class*="problem_statement"] {
   background: #ffffff !important;

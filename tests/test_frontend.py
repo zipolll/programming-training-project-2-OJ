@@ -330,6 +330,9 @@ def test_problem_catalogue_uses_first_tag_and_difficulty_colours() -> None:
         "red",
     ]
     assert difficulty_tone("竞赛级") == "purple"
+    source = Path(__file__).parents[1] / "frontend" / "pages" / "problems.py"
+    content = source.read_text(encoding="utf-8")
+    assert content.count('vertical_alignment="center"') >= 2
 
 
 def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:

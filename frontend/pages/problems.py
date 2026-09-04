@@ -429,14 +429,18 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
     start = (page - 1) * page_size
     visible = filtered[start : start + page_size]
     with st.container(key="problem_catalog"):
-        header = st.columns([1, 2.8, 1.5, 1.5, 1.2])
+        header = st.columns(
+            [1, 2.8, 1.5, 1.5, 1.2], vertical_alignment="center"
+        )
         header[0].markdown("**题号**")
         header[1].markdown("**题目名称**")
         header[2].markdown("**题型**")
         header[3].markdown("**标签**")
         header[4].markdown("**难度**")
         for problem in visible:
-            row = st.columns([1, 2.8, 1.5, 1.5, 1.2])
+            row = st.columns(
+                [1, 2.8, 1.5, 1.5, 1.2], vertical_alignment="center"
+            )
             row[0].write(problem["id"])
             row[1].button(
                 str(problem["title"]),
