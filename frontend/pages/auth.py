@@ -16,6 +16,7 @@ from frontend.session import (
     restore_identity,
     set_auth_user,
 )
+from frontend.session_cache import cached_for_session, clear_session_cache
 
 
 def render_register(api: ApiClient, on_success: Callable[[], None] | None = None) -> None:
@@ -140,12 +141,7 @@ def render_logout(api: ApiClient, on_success: Callable[[], None] | None = None) 
 
 
 def render_profile(api: ApiClient, user: dict[str, object]) -> None:
-    try:
-        data = api.get(f"/users/{user['id']}")["data"]
-    except Exception as exc:
-        show_error(exc)
-        return
-    role = str(data.get("role", "user"))
+    role = str(user.get("role", "user"))
     if role == "admin":
         page_header(
             "管理员中心",
@@ -153,7 +149,6 @@ def render_profile(api: ApiClient, user: dict[str, object]) -> None:
             icon="🛡️",
             eyebrow="ADMIN ACCOUNT",
         )
-        badges([("管理员", "orange"), ("平台管理权限", "cyan")])
     else:
         page_header(
             "个人战绩",
@@ -161,6 +156,19 @@ def render_profile(api: ApiClient, user: dict[str, object]) -> None:
             icon="🏅",
             eyebrow="PLAYER PROFILE",
         )
+    try:
+        with st.spinner("正在加载个人信息..."):
+            data = cached_for_session(
+                f"profile:{user['id']}",
+                lambda: api.get(f"/users/{user['id']}")["data"],
+            )
+    except Exception as exc:
+        show_error(exc)
+        return
+    role = str(data.get("role", "user"))
+    if role == "admin":
+        badges([("管理员", "orange"), ("平台管理权限", "cyan")])
+    else:
         badges([("普通用户", "cyan")])
     identity, joined = st.columns(2)
     with identity:
@@ -184,9 +192,12 @@ def render_user_admin(api: ApiClient) -> None:
     page, page_size = pagination_values("user_admin")
     try:
         with st.spinner("正在加载用户..."):
-            result = api.get("/users/", params={"page": page, "page_size": page_size})[
-                "data"
-            ]
+            result = cached_for_session(
+                f"users:{page}:{page_size}",
+                lambda: api.get(
+                    "/users/", params={"page": page, "page_size": page_size}
+                )["data"],
+            )
     except Exception as exc:
         show_error(exc)
         return
@@ -239,5 +250,6 @@ def render_user_admin(api: ApiClient) -> None:
         except Exception as exc:
             show_error(exc)
         else:
+            clear_session_cache("users:")
             st.success("用户角色修改成功。")
             st.rerun()

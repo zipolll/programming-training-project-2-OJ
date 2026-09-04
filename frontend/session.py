@@ -11,6 +11,7 @@ import streamlit as st
 from frontend.api_client import ApiClient
 from frontend.components.auth_bridge import mount_auth_bridge
 from frontend.errors import ApiError
+from frontend.session_cache import clear_session_cache
 
 AUTH_USER_KEY = "auth_user"
 API_CLIENT_KEY = "api_client"
@@ -95,6 +96,7 @@ def get_api_client(state: MutableMapping[str, Any] | None = None) -> ApiClient:
 
     def unauthorized() -> None:
         clear_auth(target)
+        clear_session_cache(state=target)
         request_browser_bridge_clear(target)
 
     client = ApiClient(on_unauthorized=unauthorized)
@@ -207,4 +209,5 @@ def logout_local(
     client = api or get_api_client(state)
     client.clear_cookies()
     clear_auth(state)
+    clear_session_cache(state=state)
     request_browser_bridge_clear(state)
