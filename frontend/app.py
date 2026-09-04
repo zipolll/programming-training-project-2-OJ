@@ -74,6 +74,25 @@ def _page(
     )
 
 
+def render_auth_loading() -> None:
+    """Keep the requested route mounted while browser authentication resolves."""
+    page_header(
+        "正在载入",
+        "马上回到你的页面。",
+        icon="⏳",
+        eyebrow="LOADING",
+    )
+
+
+def run_auth_loading_navigation() -> None:
+    """Register every route invisibly so a hard refresh does not fall home."""
+    loading_pages = [
+        _page(render_auth_loading, title, default=title == "首页")
+        for title in NAVIGATION_METADATA
+    ]
+    st.navigation(loading_pages, position="hidden").run()
+
+
 def main() -> None:
     st.set_page_config(page_title="Programming Training OJ", page_icon="⚖️", layout="wide")
     apply_theme()
@@ -85,12 +104,7 @@ def main() -> None:
     except Exception as exc:
         show_error(exc)
     if auth_resolution_pending(api):
-        page_header(
-            "正在载入",
-            "马上回到你的页面。",
-            icon="⏳",
-            eyebrow="LOADING",
-        )
+        run_auth_loading_navigation()
         st.stop()
     user = current_user()
     role = str(user.get("role")) if user else None

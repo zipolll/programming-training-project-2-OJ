@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
+from frontend import app as frontend_app
 from frontend.api_client import ApiClient
 from frontend.components import ui
 from frontend.components.pagination import page_count
@@ -637,6 +638,36 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
     assert navigation_sections("user")["评测"] == ["提交代码", "提交记录"]
     assert navigation_sections("admin")["题目"][-1] == "AI 智能命题"
     assert navigation_sections("admin")["评测"][-1] == "日志可见性"
+
+
+def test_auth_loading_navigation_preserves_every_registered_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages: list[tuple[str, bool]] = []
+    navigation_run = False
+
+    def fake_page(_renderer: Any, title: str, *, default: bool = False) -> tuple[str, bool]:
+        page = (title, default)
+        pages.append(page)
+        return page
+
+    class FakeNavigation:
+        def run(self) -> None:
+            nonlocal navigation_run
+            navigation_run = True
+
+    def fake_navigation(received: list[tuple[str, bool]], *, position: str) -> FakeNavigation:
+        assert received == pages
+        assert position == "hidden"
+        return FakeNavigation()
+
+    monkeypatch.setattr(frontend_app, "_page", fake_page)
+    monkeypatch.setattr(frontend_app.st, "navigation", fake_navigation)
+    frontend_app.run_auth_loading_navigation()
+
+    assert [title for title, _ in pages] == list(NAVIGATION_METADATA)
+    assert [title for title, default in pages if default] == ["首页"]
+    assert navigation_run is True
 
 
 def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatch) -> None:
