@@ -332,21 +332,36 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
     generated = task.get("final_problem") or task.get("draft")
     if generated:
         problem = generated["problem"]
-        section_header(problem["title"], icon="📘")
+        section_header("题目详情", icon="📘")
         badges(
             [
                 (str(problem.get("difficulty", "未标注难度")), "orange"),
                 (f"{len(problem.get('testcases', []))} 个测试点", "cyan"),
+                *((str(tag), "green") for tag in problem.get("tags", [])),
             ]
         )
-        st.markdown(problem["description"])
-        section_header("输入", icon="📥")
-        st.markdown(problem["input_description"])
-        section_header("输出", icon="📤")
-        st.markdown(problem["output_description"])
-        section_header("约束", icon="📐")
-        st.markdown(problem["constraints"])
-        st.json({"samples": problem["samples"], "testcase_count": len(problem["testcases"])})
+        with st.container(border=True, key=f"agent_problem_detail_{task['task_id']}"):
+            st.markdown(f"## {problem['title']}")
+            section_header("题目描述", icon="📖")
+            st.markdown(problem["description"])
+            section_header("输入说明", icon="📥")
+            st.markdown(problem["input_description"])
+            section_header("输出说明", icon="📤")
+            st.markdown(problem["output_description"])
+            section_header("约束", icon="📐")
+            st.markdown(problem["constraints"])
+            section_header("样例", icon="🧪")
+            for index, sample in enumerate(problem.get("samples", []), 1):
+                st.markdown(f"#### 样例 {index}")
+                left, right = st.columns(2)
+                left.code(sample["input"], language=None)
+                right.code(sample["output"], language=None)
+            with st.expander("查看测试点", expanded=False):
+                for index, testcase in enumerate(problem.get("testcases", []), 1):
+                    st.markdown(f"**测试点 {index}**")
+                    left, right = st.columns(2)
+                    left.code(testcase["input"], language=None)
+                    right.code(testcase["output"], language=None)
         with st.expander("参考解法与程序"):
             st.write(generated["solution_explanation"])
             st.write(generated["complexity_analysis"])

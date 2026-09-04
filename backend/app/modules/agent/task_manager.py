@@ -21,6 +21,24 @@ from backend.app.modules.agent.repository import AgentRepository, utc_now
 from backend.app.modules.agent.tools import AgentTools
 from backend.app.modules.problems.service import ProblemNotFoundError, ProblemService
 
+
+def apply_requested_metadata(
+    generated: GeneratedProblem, request: AuthoringRequest
+) -> GeneratedProblem:
+    """Keep user-selected catalogue metadata authoritative across model revisions."""
+    tags = list(
+        dict.fromkeys(
+            item.strip()
+            for item in [*request.required_knowledge, *generated.problem.tags]
+            if item.strip()
+        )
+    )
+    problem = generated.problem.model_copy(
+        update={"difficulty": request.difficulty.strip(), "tags": tags}
+    )
+    return generated.model_copy(update={"problem": problem})
+
+
 logger = logging.getLogger(__name__)
 
 STAGES = (
@@ -360,7 +378,8 @@ class AgentTaskManager:
                 result.usage_estimated,
             )
             try:
-                return GeneratedProblem.model_validate(result.content)
+                generated = GeneratedProblem.model_validate(result.content)
+                return apply_requested_metadata(generated, request)
             except ValidationError as exc:
                 last_error = exc
                 messages.append(

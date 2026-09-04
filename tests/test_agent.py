@@ -18,8 +18,10 @@ from backend.app.main import create_app
 from backend.app.modules.agent.models import (
     AgentConfigUpdate,
     AuthoringRequest,
+    GeneratedProblem,
     validate_provider_url,
 )
+from backend.app.modules.agent.task_manager import apply_requested_metadata
 
 FAKE_KEY = "test-provider-key-never-real"
 
@@ -161,6 +163,23 @@ def test_minimal_authoring_request_still_requires_core_knowledge() -> None:
                 "problem_type": "算法设计",
             }
         )
+
+
+def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> None:
+    request = AuthoringRequest.model_validate(
+        {
+            "required_knowledge": ["前缀和", "数组"],
+            "difficulty": "中等",
+            "problem_type": "算法设计",
+        }
+    )
+    result = apply_requested_metadata(
+        GeneratedProblem.model_validate(generated_problem()), request
+    )
+
+    assert result.problem.difficulty == "中等"
+    assert result.problem.tags[:2] == ["前缀和", "数组"]
+    assert "sum" in result.problem.tags
 
 
 def wait_terminal(client: TestClient, task_id: str) -> dict[str, Any]:

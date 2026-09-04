@@ -245,6 +245,18 @@ a.anchor-link {
   background: #ffffff !important;
   color: #111827 !important;
 }
+[class*="agent_problem_detail"] {
+  background: #fff;
+  color: #111827;
+  border-color: #dbe3f0 !important;
+  box-shadow: var(--oj-shadow);
+}
+[class*="agent_problem_detail"] p,
+[class*="agent_problem_detail"] li,
+[class*="agent_problem_detail"] h1,
+[class*="agent_problem_detail"] h2,
+[class*="agent_problem_detail"] h3,
+[class*="agent_problem_detail"] h4 { color: #111827 !important; }
 [class*="problem_statement"] p,
 [class*="problem_statement"] li,
 [class*="problem_statement"] h1,
@@ -273,6 +285,22 @@ a.anchor-link {
   transform: none;
 }
 [class*="submission_catalog"] .oj-badges { margin: 0; }
+[class*="submission_catalog"] [data-testid="stColumn"] {
+  display: flex;
+  align-items: center;
+}
+[class*="submission_catalog"] [data-testid="stColumn"] > div { width: 100%; }
+.oj-result-number {
+  font-size: 1.22rem;
+  font-weight: 850;
+  line-height: 2.35rem;
+}
+[class*="testcase_results"] [data-testid="stHorizontalBlock"] {
+  align-items: center;
+  padding: .5rem .7rem;
+  border-bottom: 1px solid var(--oj-border);
+}
+[class*="testcase_results"] .oj-badges { margin: 0; }
 
 .oj-timeline {
   position: relative;
@@ -452,26 +480,15 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
   align-items: center;
   justify-content: center;
   gap: .35rem;
+  width: fit-content;
+  max-width: 100%;
+  margin: .7rem auto 0;
 }
 [class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
   flex: 0 0 auto !important;
   width: auto !important;
   min-width: 0 !important;
 }
-[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(1) {
-  flex-basis: 8.25rem !important;
-  width: 8.25rem !important;
-}
-[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2),
-[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(4) {
-  flex-basis: 2.5rem !important;
-  width: 2.5rem !important;
-}
-[class*="_pagination"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(3) {
-  flex-basis: 7.25rem !important;
-  width: 7.25rem !important;
-}
-[class*="_pagination"] [data-testid="stSelectbox"],
 [class*="_pagination"] [data-testid="stButton"],
 [class*="_pagination"] [data-testid="stMarkdownContainer"] {
   margin: 0;
@@ -481,12 +498,10 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
   justify-content: center;
 }
 [class*="_pagination"] [data-testid="stButton"] button {
-  width: 2.5rem !important;
+  width: auto !important;
   min-width: 2.5rem !important;
-  max-width: 2.5rem !important;
-  padding-inline: 0 !important;
+  padding-inline: .72rem !important;
 }
-[class*="_pagination"] [data-baseweb="select"] > div,
 [class*="_pagination"] button {
   min-height: 2.5rem;
 }
