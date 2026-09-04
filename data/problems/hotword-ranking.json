@@ -1,0 +1,74 @@
+{
+  "id": "hotword-ranking",
+  "title": "热搜词排行榜",
+  "description": "小 R 经营着一个论坛，论坛的搜索系统需要实时维护一份「热搜词排行榜」。\n\n一开始，没有任何单词被搜索过，排行榜为空。你需要按输入顺序依次处理 m 个事件，每个事件是以下三种之一：\n\n1. `post w`：某位用户搜索了单词 w 一次，单词 w 的热度加 1。\n2. `delete w`：管理员永久封禁单词 w（无论 w 此前是否被搜索过）。若 w 当前在排行榜中，则立刻从排行榜中移除；同时，之后所有 `post w` 事件全部被忽略——被封禁的单词永远不会再被计入热度。\n3. `query k`：查看当前排行榜的快照并输出。查询不会改变任何状态。\n\n被搜索过至少一次且未被封禁的单词称为「活跃单词」。活跃单词按以下规则排序：\n\n- 热度大的单词排在前面；\n- 热度相同时，字典序小的单词排在前面。\n\n对于每个 `query k` 事件，输出两行：\n\n- 第一行：按排名顺序输出前 min(k, 活跃单词个数) 个活跃单词，单词之间用一个空格分隔；若此刻没有活跃单词，输出 EMPTY。\n- 第二行：输出一个整数，表示第一行中列出的单词热度之和；若第一行为 EMPTY，则输出 0。",
+  "input_description": "第一行包含一个整数 m（1 ≤ m ≤ 1000），表示事件数。\n\n接下来 m 行，每行描述一个事件，为以下三种形式之一（每行恰好一个事件，单词之间用单个空格分隔）：\n\n- post w\n- delete w\n- query k\n\n保证：每个单词 w 仅由小写英文字母 a-z 组成且 1 ≤ |w| ≤ 20；1 ≤ k ≤ 10^9；至少存在一个 query 事件。注意：被搜索的单词本身可能与事件关键字是同一个字符串（例如搜索单词 post）。",
+  "output_description": "对于每个 query 事件，按出现顺序输出两行：第一行为排行榜单词列表（或 EMPTY），第二行为所列单词的热度之和（或 0）。行末不应有多余空格。具体格式见样例。",
+  "samples": [
+    {
+      "input": "6\npost apple\npost banana\npost apple\nquery 2\ndelete apple\nquery 2\n",
+      "output": "apple banana\n3\nbanana\n1\n"
+    },
+    {
+      "input": "9\npost cat\npost dog\npost dog\npost bird\nquery 3\ndelete dog\npost dog\npost dog\nquery 3\n",
+      "output": "dog bird cat\n4\nbird cat\n2\n"
+    }
+  ],
+  "constraints": "1 ≤ m ≤ 1000；每个单词仅由小写英文字母 a-z 组成，长度 1 ≤ |w| ≤ 20；1 ≤ k ≤ 10^9；保证至少有一个 query 事件；同一单词可以被搜索多次，也可以被 delete 多次（效果等同于封禁一次）；活跃单词的热度恒为正整数。",
+  "testcases": [
+    {
+      "input": "6\npost apple\npost banana\npost apple\nquery 2\ndelete apple\nquery 2\n",
+      "output": "apple banana\n3\nbanana\n1\n"
+    },
+    {
+      "input": "9\npost cat\npost dog\npost dog\npost bird\nquery 3\ndelete dog\npost dog\npost dog\nquery 3\n",
+      "output": "dog bird cat\n4\nbird cat\n2\n"
+    },
+    {
+      "input": "5\nquery 5\npost zz\nquery 100\ndelete zz\nquery 1\n",
+      "output": "EMPTY\n0\nzz\n1\nEMPTY\n0\n"
+    },
+    {
+      "input": "6\ndelete ghost\npost ghost\npost alpha\npost ghost\nquery 1\nquery 10\n",
+      "output": "alpha\n1\nalpha\n1\n"
+    },
+    {
+      "input": "12\npost b\npost a\npost c\npost b\npost a\npost c\npost d\npost e\npost f\nquery 3\nquery 6\nquery 100\n",
+      "output": "a b c\n6\na b c d e f\n9\na b c d e f\n9\n"
+    },
+    {
+      "input": "11\npost sing\npost sing\npost sing\npost song\npost song\nquery 2\ndelete sing\npost song\npost son\nquery 2\nquery 1\n",
+      "output": "sing song\n5\nsong son\n4\nsong\n3\n"
+    },
+    {
+      "input": "14\npost ice\npost ice\npost fire\npost wind\npost fire\npost ice\nquery 3\ndelete fire\npost fire\npost water\npost water\npost water\nquery 2\nquery 5\n",
+      "output": "ice fire wind\n6\nice water\n6\nice water wind\n7\n"
+    },
+    {
+      "input": "8\npost post\npost delete\ndelete query\ndelete query\nquery 2\ndelete post\ndelete delete\nquery 1\n",
+      "output": "delete post\n2\nEMPTY\n0\n"
+    },
+    {
+      "input": "1\nquery 1\n",
+      "output": "EMPTY\n0\n"
+    },
+    {
+      "input": "20\npost algorithm\npost algorithm\npost datastructure\npost algorithm\npost zen\nquery 4\ndelete zen\npost zen\npost queue\npost queue\nquery 3\ndelete datastructure\nquery 3\npost queue\nquery 1\npost algorithm\nquery 2\ndelete queue\nquery 2\nquery 100\n",
+      "output": "algorithm datastructure zen\n5\nalgorithm queue datastructure\n6\nalgorithm queue\n5\nalgorithm\n3\nalgorithm queue\n7\nalgorithm\n4\nalgorithm\n4\n"
+    }
+  ],
+  "hint": "用 dict 维护每个活跃单词的热度，用 set 维护被封禁的单词集合；每次 query 用 sorted(heat, key=lambda w: (-heat[w], w)) 得到完整排名，再用 ranked[:min(k, len(ranked))] 截取前 k 名（切片天然处理 k 大于活跃单词个数的情况）。最常见的错误：delete 时只把单词从热度表里删掉，而没有记录永久封禁，导致同一单词后续的 post 又被错误计入。",
+  "source": "",
+  "tags": [
+    "模拟",
+    "实现",
+    "排序",
+    "字符串",
+    "哈希表"
+  ],
+  "time_limit": 2.0,
+  "memory_limit": 128,
+  "author": "",
+  "difficulty": "中等",
+  "problem_type": "基础编程"
+}
