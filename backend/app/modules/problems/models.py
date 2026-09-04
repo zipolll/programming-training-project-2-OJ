@@ -47,6 +47,7 @@ class Problem(_StrictModel):
     memory_limit: int = Field(default=128, strict=True, gt=0)
     author: str = Field(default="", strict=True)
     difficulty: str = Field(default="", strict=True)
+    problem_type: str = Field(default="", strict=True, max_length=100)
 
 
 class ProblemSummary(_StrictModel):
@@ -54,3 +55,8 @@ class ProblemSummary(_StrictModel):
 
     id: ProblemId
     title: NonEmptyText
+    difficulty: str
+    problem_type: str
+    tags: list[NonEmptyText]
+    source: str
+    author: str

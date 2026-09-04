@@ -34,7 +34,11 @@ def apply_requested_metadata(
         )
     )
     problem = generated.problem.model_copy(
-        update={"difficulty": request.difficulty.strip(), "tags": tags}
+        update={
+            "difficulty": request.difficulty.strip(),
+            "problem_type": request.problem_type.strip(),
+            "tags": tags,
+        }
     )
     return generated.model_copy(update={"problem": problem})
 

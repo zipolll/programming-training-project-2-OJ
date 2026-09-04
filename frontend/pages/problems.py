@@ -20,10 +20,24 @@ from frontend.data_access import (
     load_language_names,
     load_problem_summaries,
 )
-from frontend.models import build_problem_payload, validate_problem
+from frontend.models import (
+    DIFFICULTY_LEVELS,
+    OTHER_OPTION,
+    PROBLEM_TYPES,
+    build_problem_payload,
+    catalogue_selection,
+    resolve_catalogue_option,
+    validate_problem,
+)
 from frontend.pages.agent import render_agent
 
 PROBLEM_QUERY_KEY = "problem"
+DIFFICULTY_TONES = {
+    "入门": "green",
+    "简单": "cyan",
+    "中等": "orange",
+    "困难": "red",
+}
 
 
 def problem_detail_actions(role: str | None) -> list[str]:
@@ -32,6 +46,40 @@ def problem_detail_actions(role: str | None) -> list[str]:
     if role == "admin":
         actions.append("删除")
     return actions
+
+
+def problem_metadata_items(problem: dict[str, Any]) -> list[tuple[str, str]]:
+    """Build visually distinct difficulty and taxonomy badges for a problem."""
+    items: list[tuple[str, str]] = []
+    difficulty = str(problem.get("difficulty") or "").strip()
+    if difficulty:
+        items.append((f"难度 · {difficulty}", difficulty_tone(difficulty)))
+    problem_type = str(problem.get("problem_type") or "").strip()
+    if problem_type:
+        items.append((f"题型 · {problem_type}", "cyan"))
+    items.extend(
+        (str(tag).strip(), "cyan")
+        for tag in problem.get("tags") or []
+        if str(tag).strip()
+    )
+    return items
+
+
+def difficulty_tone(difficulty: Any) -> str:
+    """Use a stable, distinct colour for each standard difficulty level."""
+    return DIFFICULTY_TONES.get(str(difficulty or "").strip(), "purple")
+
+
+def first_problem_tag(problem: dict[str, Any]) -> str:
+    """Return only the first non-empty tag for compact catalogue display."""
+    return next(
+        (
+            str(tag).strip()
+            for tag in problem.get("tags") or []
+            if str(tag).strip()
+        ),
+        "",
+    )
 
 
 def filter_problem_summaries(
@@ -50,6 +98,7 @@ def filter_problem_summaries(
                 str(problem.get("title") or ""),
                 str(problem.get("source") or ""),
                 str(problem.get("author") or ""),
+                str(problem.get("problem_type") or ""),
                 *(str(tag) for tag in problem.get("tags") or []),
             ]
         ).casefold()
@@ -257,13 +306,6 @@ def render_problem_detail(
         icon="🎯",
         eyebrow=f"PROBLEM {problem['id']}",
     )
-    metadata = []
-    if problem.get("difficulty"):
-        metadata.append((str(problem["difficulty"]), "orange"))
-    metadata.extend((str(tag), "orange") for tag in problem.get("tags", []))
-    if metadata:
-        badges(metadata)
-
     actions = problem_detail_actions(role)
     if actions:
         action_columns = st.columns([1, 1, 1, 5])
@@ -292,6 +334,10 @@ def render_problem_detail(
         info_card("内存限制", f"{problem['memory_limit']} MB", icon="💾")
 
     with st.container(border=True, key="problem_statement"):
+        metadata = problem_metadata_items(problem)
+        if metadata:
+            with st.container(key="problem_metadata"):
+                badges(metadata)
         section_header("题目描述", icon="📖")
         st.markdown(problem["description"])
         section_header("输入说明", icon="📥")
@@ -351,9 +397,19 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
         key="problem_list_search",
         on_change=filters_changed,
     )
-    difficulties = sorted(
-        {str(item.get("difficulty")) for item in problems if item.get("difficulty")}
-    )
+    available_difficulties = {
+        str(item.get("difficulty")).strip()
+        for item in problems
+        if str(item.get("difficulty") or "").strip()
+    }
+    difficulties = [
+        *(
+            difficulty
+            for difficulty in DIFFICULTY_LEVELS
+            if difficulty in available_difficulties
+        ),
+        *sorted(available_difficulties - set(DIFFICULTY_LEVELS)),
+    ]
     selected_difficulty = difficulty_col.selectbox(
         "难度", ["全部难度", *difficulties],
         key="problem_list_difficulty",
@@ -373,13 +429,14 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
     start = (page - 1) * page_size
     visible = filtered[start : start + page_size]
     with st.container(key="problem_catalog"):
-        header = st.columns([1.1, 3.2, 2.3, 1])
+        header = st.columns([1, 2.8, 1.5, 1.5, 1.2])
         header[0].markdown("**题号**")
         header[1].markdown("**题目名称**")
-        header[2].markdown("**标签**")
-        header[3].markdown("**难度**")
+        header[2].markdown("**题型**")
+        header[3].markdown("**标签**")
+        header[4].markdown("**难度**")
         for problem in visible:
-            row = st.columns([1.1, 3.2, 2.3, 1])
+            row = st.columns([1, 2.8, 1.5, 1.5, 1.2])
             row[0].write(problem["id"])
             row[1].button(
                 str(problem["title"]),
@@ -388,8 +445,19 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
                 args=(str(problem["id"]),),
                 help=f"查看 {problem['title']} 的题目详情",
             )
-            row[2].write(" · ".join(str(tag) for tag in problem.get("tags") or []) or "—")
-            row[3].write(problem.get("difficulty") or "—")
+            row[2].write(problem.get("problem_type") or "—")
+            first_tag = first_problem_tag(problem)
+            with row[3]:
+                if first_tag:
+                    badges([(first_tag, "cyan")])
+                else:
+                    st.write("—")
+            difficulty = str(problem.get("difficulty") or "").strip()
+            with row[4]:
+                if difficulty:
+                    badges([(difficulty, difficulty_tone(difficulty))])
+                else:
+                    st.write("—")
     render_pagination("problem_list", total=len(filtered))
 
 
@@ -427,6 +495,36 @@ def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[d
     return pairs
 
 
+def _catalogue_select(
+    container: Any,
+    label: str,
+    current: Any,
+    options: list[str],
+    *,
+    key: str,
+) -> str:
+    """Render an optional dropdown with an explicit custom-value field."""
+    selected = catalogue_selection(current, options, allow_empty=True)
+    choices = ["", *options, OTHER_OPTION]
+    choice = container.selectbox(
+        label,
+        choices,
+        index=choices.index(selected),
+        key=key,
+        format_func=lambda value: "未设置" if value == "" else value,
+    )
+    other = ""
+    if choice == OTHER_OPTION:
+        current_value = str(current or "").strip()
+        other = container.text_input(
+            f"其它{label}",
+            current_value if selected == OTHER_OPTION else "",
+            key=f"{key}_other",
+            placeholder=f"请输入自定义{label}",
+        )
+    return resolve_catalogue_option(choice, other)
+
+
 def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any] | None:
     data = initial or {}
     problem_id = st.text_input(
@@ -453,8 +551,20 @@ def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any]
     hint = st.text_area("提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER)
     source = st.text_input("来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER)
     author = st.text_input("作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER)
-    difficulty = st.text_input(
-        "难度", data.get("difficulty", ""), placeholder=OPTIONAL_PLACEHOLDER
+    difficulty_col, type_col = st.columns(2)
+    difficulty = _catalogue_select(
+        difficulty_col,
+        "难度",
+        data.get("difficulty", ""),
+        DIFFICULTY_LEVELS,
+        key=f"{prefix}_difficulty",
+    )
+    problem_type = _catalogue_select(
+        type_col,
+        "题型",
+        data.get("problem_type", ""),
+        PROBLEM_TYPES,
+        key=f"{prefix}_problem_type",
     )
     tags = st.text_input(
         "标签",
@@ -484,6 +594,7 @@ def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any]
             "source": source,
             "author": author,
             "difficulty": difficulty,
+            "problem_type": problem_type,
             "tags": tags.split(","),
             "time_limit": time_limit,
             "memory_limit": memory_limit,

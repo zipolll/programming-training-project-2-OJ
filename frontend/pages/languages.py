@@ -9,6 +9,8 @@ from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDE
 from frontend.components.ui import badges, page_header, section_header
 from frontend.data_access import invalidate_language_cache, load_language_names
 
+LANGUAGE_LOADING_TEXT = "正在加载语言注册页面..."
+
 
 def validate_language(values: dict[str, Any]) -> list[str]:
     errors: list[str] = []
@@ -29,7 +31,8 @@ def render_language_registration(api: ApiClient) -> None:
         eyebrow="LANGUAGE REGISTRY",
     )
     try:
-        languages = load_language_names(api.base_url, api)
+        with st.spinner(LANGUAGE_LOADING_TEXT):
+            languages = load_language_names(api.base_url, api)
     except Exception as exc:
         show_error(exc)
         languages = []

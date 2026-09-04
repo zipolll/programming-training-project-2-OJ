@@ -18,18 +18,15 @@ from frontend.components.ui import (
     timeline_event,
 )
 from frontend.data_access import invalidate_problem_cache, load_problem_summaries
+from frontend.models import (
+    DIFFICULTY_LEVELS,
+    OTHER_OPTION,
+    PROBLEM_TYPES,
+    resolve_catalogue_option,
+)
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
-PROBLEM_TYPES = [
-    "基础编程",
-    "算法设计",
-    "数据结构",
-    "数学",
-    "字符串",
-    "图论",
-    "动态规划",
-]
 VIEW_LOADING_TEXT = {
     "模型配置": "正在加载模型配置...",
     "创建任务": "正在加载命题选项...",
@@ -174,7 +171,7 @@ def _config(api: ApiClient) -> None:
             "单次最大输出 Token",
             256,
             128000,
-            int(current.get("max_output_tokens", 16384)),
+            int(current.get("max_output_tokens", 50000)),
         )
         saved = st.form_submit_button("保存配置")
     if saved:
@@ -236,15 +233,31 @@ def _authoring_form(api: ApiClient) -> None:
             help="多个知识点使用逗号分隔；生成的解法必须使用这些知识点。",
         )
         difficulty_col, type_col = st.columns(2)
-        difficulty = difficulty_col.selectbox(
-            "目标难度", ["入门", "简单", "中等", "困难"]
+        difficulty_choice = difficulty_col.selectbox(
+            "目标难度",
+            [*DIFFICULTY_LEVELS, OTHER_OPTION],
         )
-        problem_type = type_col.selectbox(
+        difficulty_other = ""
+        if difficulty_choice == OTHER_OPTION:
+            difficulty_other = difficulty_col.text_input(
+                "其它难度",
+                placeholder="请输入自定义难度",
+            )
+        problem_type_choice = type_col.selectbox(
             "题目类型",
-            PROBLEM_TYPES,
+            [*PROBLEM_TYPES, OTHER_OPTION],
             index=1,
-            accept_new_options=True,
-            help="可选择常用类型，也可以直接输入自定义类型。",
+            help="选择“其它”后可填写自定义题型。",
+        )
+        problem_type_other = ""
+        if problem_type_choice == OTHER_OPTION:
+            problem_type_other = type_col.text_input(
+                "其它题型",
+                placeholder="请输入自定义题型",
+            )
+        difficulty = resolve_catalogue_option(difficulty_choice, difficulty_other)
+        problem_type = resolve_catalogue_option(
+            problem_type_choice, problem_type_other
         )
         additional = st.text_area(
             "补充要求", placeholder=OPTIONAL_PLACEHOLDER, height=100
@@ -286,8 +299,10 @@ def _authoring_form(api: ApiClient) -> None:
         form_errors = []
         if not knowledge.strip():
             form_errors.append("请输入核心知识点。")
+        if not difficulty:
+            form_errors.append("请输入其它难度。")
         if not problem_type.strip():
-            form_errors.append("请选择题目类型。")
+            form_errors.append("请输入其它题型。")
         if adapt and not existing:
             form_errors.append("请选择需要改编的已有题目。")
         if form_errors:
@@ -370,7 +385,7 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
                 language=generated["reference_solution_language"],
             )
     if task.get("validation_report"):
-        with st.expander("验证报告", expanded=True):
+        with st.expander("验证报告", expanded=False):
             st.json(task["validation_report"])
     if task["status"] == "success":
         feedback = st.text_area(

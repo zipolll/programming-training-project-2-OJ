@@ -20,9 +20,10 @@ def show_error(exc: Exception) -> None:
         st.error("操作失败，请稍后重试。")
 
 
-def render_status(status: str | None) -> None:
+def render_status(status: str | None, *, show_badge: bool = True) -> None:
     text = status_text(status)
-    status_badge(status or "未知")
+    if show_badge:
+        status_badge(status or "未知")
     if status == "pending":
         st.info(text, icon="⏳")
     elif status == "error" or status in {"WA", "CE", "RE", "TLE", "MLE", "UNK"}:

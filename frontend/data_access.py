@@ -16,7 +16,15 @@ def load_problem_summaries(
     """Cache only display metadata, never hidden testcase contents."""
     del base_url
     problems = _api.get("/problems/")["data"]
-    allowed = ("id", "title", "difficulty", "tags", "source", "author")
+    allowed = (
+        "id",
+        "title",
+        "difficulty",
+        "problem_type",
+        "tags",
+        "source",
+        "author",
+    )
     return [{key: problem.get(key) for key in allowed} for problem in problems]
 
 

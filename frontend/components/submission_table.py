@@ -34,16 +34,19 @@ def render_submission_table(
 ) -> None:
     """Render a compact result table; IDs become links when a callback is supplied."""
     with st.container(key=f"submission_catalog_{key}"):
-        header = st.columns([1.2, 2.1, 1, 1])
+        header = st.columns([1.2, 2.1, 1, 1], vertical_alignment="center")
         header[0].markdown("**提交编号**")
         header[1].markdown("**评测结果**")
         header[2].markdown("**得分**")
         header[3].markdown("**总分**")
         for item in submissions:
             submission_id = str(item["submission_id"])
-            row = st.columns([1.2, 2.1, 1, 1])
+            row = st.columns([1.2, 2.1, 1, 1], vertical_alignment="center")
             if on_select is None:
-                row[0].write(submission_id)
+                row[0].markdown(
+                    f"<div class='oj-submission-id'>{submission_id}</div>",
+                    unsafe_allow_html=True,
+                )
             else:
                 row[0].button(
                     submission_id,
@@ -57,5 +60,9 @@ def render_submission_table(
                 badges([(label, tone)])
             score = item.get("score") if item.get("score") is not None else "—"
             counts = item.get("counts") if item.get("counts") is not None else "—"
-            row[2].markdown(f"<div class='oj-result-number'>{score}</div>", unsafe_allow_html=True)
+            score_tone = "success" if tone == "green" else "failure"
+            row[2].markdown(
+                f"<div class='oj-result-number oj-result-number--{score_tone}'>{score}</div>",
+                unsafe_allow_html=True,
+            )
             row[3].markdown(f"<div class='oj-result-number'>{counts}</div>", unsafe_allow_html=True)

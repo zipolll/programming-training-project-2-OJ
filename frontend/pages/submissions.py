@@ -113,7 +113,9 @@ def _render_detail_data(data: dict[str, Any]) -> None:
     summary[0].metric("评测状态", finished)
     summary[1].metric("得分", data.get("score") if data.get("score") is not None else "—")
     summary[2].metric("总分", data.get("counts") if data.get("counts") is not None else "—")
-    render_status(status)
+    # The alert already communicates the completed state; avoid repeating the raw
+    # API status in a separate badge on the detail page.
+    render_status(status, show_badge=False)
     compile_info = data.get("compile_info")
     if compile_info:
         with st.expander("编译信息", expanded=compile_info.get("result") == "error"):
@@ -144,13 +146,17 @@ def _render_log(api: ApiClient, submission_id: str) -> None:
         empty_state("暂时没有测试点日志。", icon="🧪")
     else:
         with st.container(key=f"testcase_results_{submission_id}"):
-            header = st.columns([.7, 1.7, 1, 1, 2])
+            header = st.columns(
+                [.7, 1.7, 1, 1, 2], vertical_alignment="center"
+            )
             for column, label in zip(
                 header, ("测试点", "结果", "时间", "内存", "评测信息"), strict=True
             ):
                 column.markdown(f"**{label}**")
             for item in details:
-                row = st.columns([.7, 1.7, 1, 1, 2])
+                row = st.columns(
+                    [.7, 1.7, 1, 1, 2], vertical_alignment="center"
+                )
                 row[0].markdown(f"**{item['id']}**")
                 result = str(item["result"])
                 tone = "green" if result == "AC" else "red"

@@ -32,6 +32,7 @@ def problem_data() -> dict[str, object]:
         "memory_limit": 128,
         "author": "teacher",
         "difficulty": "beginner",
+        "problem_type": "数学",
     }
 
 
@@ -90,7 +91,17 @@ def test_create_list_and_get_problem(
     assert listing.json() == {
         "code": 200,
         "msg": "success",
-        "data": [{"id": "P1001", "title": "A+B Problem"}],
+        "data": [
+            {
+                "id": "P1001",
+                "title": "A+B Problem",
+                "difficulty": "beginner",
+                "problem_type": "数学",
+                "tags": ["math"],
+                "source": "course",
+                "author": "teacher",
+            }
+        ],
     }
     assert detail.status_code == 200
     assert detail.json() == {"code": 200, "msg": "success", "data": problem_data}
@@ -110,6 +121,7 @@ def test_optional_fields_use_documented_defaults(
         "memory_limit",
         "author",
         "difficulty",
+        "problem_type",
     ):
         problem_data.pop(optional)
 
@@ -125,6 +137,7 @@ def test_optional_fields_use_documented_defaults(
         "memory_limit": 128,
         "author": "",
         "difficulty": "",
+        "problem_type": "",
     }
 
 

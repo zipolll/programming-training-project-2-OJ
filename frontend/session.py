@@ -147,8 +147,13 @@ def sync_browser_auth(
         target[BRIDGE_ATTEMPTED_KEY] = True
         target.pop(BRIDGE_TOKEN_KEY, None)
 
-    ticket = getattr(result, "ticket", None)
-    ticket_nonce = getattr(result, "ticket_nonce", None)
+    ticket_result = getattr(result, "ticket_result", None)
+    if isinstance(ticket_result, dict):
+        ticket = ticket_result.get("ticket")
+        ticket_nonce = ticket_result.get("nonce")
+    else:
+        ticket = None
+        ticket_nonce = None
     if not isinstance(ticket, str) or ticket_nonce != nonce:
         return current_user(target)
     ticket_fingerprint = sha256(ticket.encode()).hexdigest()

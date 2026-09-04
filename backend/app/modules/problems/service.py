@@ -25,7 +25,18 @@ class ProblemService:
 
     async def list_problems(self) -> list[ProblemSummary]:
         problems = await self.repository.list_all()
-        return [ProblemSummary(id=problem.id, title=problem.title) for problem in problems]
+        return [
+            ProblemSummary(
+                id=problem.id,
+                title=problem.title,
+                difficulty=problem.difficulty,
+                problem_type=problem.problem_type,
+                tags=problem.tags,
+                source=problem.source,
+                author=problem.author,
+            )
+            for problem in problems
+        ]
 
     async def get_problem(self, problem_id: str) -> Problem:
         validate_problem_id(problem_id)

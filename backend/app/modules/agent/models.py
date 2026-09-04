@@ -55,7 +55,7 @@ class AgentConfigUpdate(StrictModel):
     currency: str = Field(default="USD", min_length=1, max_length=12)
     request_timeout: float = Field(default=360.0, gt=0, le=600, allow_inf_nan=False)
     max_iterations: int = Field(default=3, ge=1, le=10)
-    max_output_tokens: int = Field(default=16384, ge=256, le=128000)
+    max_output_tokens: int = Field(default=50000, ge=256, le=128000)
 
     @field_validator("provider_url")
     @classmethod

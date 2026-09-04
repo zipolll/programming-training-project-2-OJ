@@ -13,6 +13,7 @@ import pytest
 from frontend import app as frontend_app
 from frontend.api_client import ApiClient
 from frontend.components import ui
+from frontend.components.auth_bridge import _BRIDGE_JS
 from frontend.components.pagination import page_count, page_window
 from frontend.components.submission_table import submission_outcome
 from frontend.components.theme import GLOBAL_CSS
@@ -23,11 +24,15 @@ from frontend.data_access import (
 )
 from frontend.errors import ApiError, NetworkError, ProtocolError
 from frontend.models import (
+    DIFFICULTY_LEVELS,
     NAVIGATION_LAYOUT,
     NAVIGATION_METADATA,
+    OTHER_OPTION,
     build_problem_payload,
+    catalogue_selection,
     navigation_for,
     navigation_sections,
+    resolve_catalogue_option,
     should_poll,
     status_text,
     validate_login,
@@ -36,8 +41,14 @@ from frontend.models import (
 )
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
-from frontend.pages.languages import validate_language
-from frontend.pages.problems import filter_problem_summaries, problem_detail_actions
+from frontend.pages.languages import LANGUAGE_LOADING_TEXT, validate_language
+from frontend.pages.problems import (
+    difficulty_tone,
+    filter_problem_summaries,
+    first_problem_tag,
+    problem_detail_actions,
+    problem_metadata_items,
+)
 from frontend.pages.submissions import resolve_submission_user_id
 from frontend.session import (
     auth_resolution_pending,
@@ -245,6 +256,8 @@ def test_problem_payload_multiple_samples_and_testcases() -> None:
         "constraints": "small",
         "samples": [{"input": "1 2", "output": "3"}, {"input": "0 0", "output": "0"}],
         "testcases": [{"input": "2 3", "output": "5"}, {"input": "-1 1", "output": "0"}],
+        "difficulty": "中等",
+        "problem_type": "数学",
         "tags": [" math ", ""],
         "time_limit": 1,
         "memory_limit": 64,
@@ -253,6 +266,8 @@ def test_problem_payload_multiple_samples_and_testcases() -> None:
     assert payload["id"] == "P1"
     assert payload["title"] == "Sum"
     assert len(payload["samples"]) == len(payload["testcases"]) == 2
+    assert payload["difficulty"] == "中等"
+    assert payload["problem_type"] == "数学"
     assert payload["tags"] == ["math"]
     assert validate_problem(payload) == []
 
@@ -263,6 +278,7 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
             "id": "P1001",
             "title": "前缀和入门",
             "difficulty": "简单",
+            "problem_type": "算法设计",
             "tags": ["数组", "前缀和"],
             "source": "训练营",
             "author": "teacher",
@@ -271,6 +287,7 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
             "id": "P1002",
             "title": "最短路",
             "difficulty": "困难",
+            "problem_type": "图论",
             "tags": ["图论"],
             "source": "校赛",
             "author": "coach",
@@ -286,6 +303,33 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
     assert [
         item["id"] for item in filter_problem_summaries(problems, difficulty="困难")
     ] == ["P1002"]
+    assert [item["id"] for item in filter_problem_summaries(problems, "算法设计")] == [
+        "P1001"
+    ]
+
+
+def test_catalogue_options_support_empty_standard_and_custom_values() -> None:
+    assert DIFFICULTY_LEVELS == ["入门", "简单", "中等", "困难"]
+    assert catalogue_selection("", DIFFICULTY_LEVELS, allow_empty=True) == ""
+    assert catalogue_selection("中等", DIFFICULTY_LEVELS, allow_empty=True) == "中等"
+    assert (
+        catalogue_selection("竞赛级", DIFFICULTY_LEVELS, allow_empty=True)
+        == OTHER_OPTION
+    )
+    assert resolve_catalogue_option(OTHER_OPTION, " 竞赛级 ") == "竞赛级"
+    assert resolve_catalogue_option("简单", "ignored") == "简单"
+
+
+def test_problem_catalogue_uses_first_tag_and_difficulty_colours() -> None:
+    assert first_problem_tag({"tags": ["", "数组", "前缀和"]}) == "数组"
+    assert first_problem_tag({"tags": []}) == ""
+    assert [difficulty_tone(level) for level in DIFFICULTY_LEVELS] == [
+        "green",
+        "cyan",
+        "orange",
+        "red",
+    ]
+    assert difficulty_tone("竞赛级") == "purple"
 
 
 def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
@@ -297,9 +341,44 @@ def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
     assert 'section_header("新建普通题目"' in content
     assert 'options = ["新增", "编辑", "删除"]' not in content
     assert "我确认永久删除该题目。" in content
+    statement_position = content.index(
+        'with st.container(border=True, key="problem_statement")'
+    )
+    metadata_position = content.index('with st.container(key="problem_metadata")')
+    description_position = content.index(
+        'section_header("题目描述", icon="📖")', metadata_position
+    )
+    assert statement_position < metadata_position < description_position
+
+
+@pytest.mark.parametrize(
+    ("problem", "expected"),
+    [
+        (
+            {
+                "difficulty": "中等",
+                "problem_type": "基础编程",
+                "tags": ["模拟", "排序"],
+            },
+            [
+                ("难度 · 中等", "orange"),
+                ("题型 · 基础编程", "cyan"),
+                ("模拟", "cyan"),
+                ("排序", "cyan"),
+            ],
+        ),
+        ({"difficulty": "简单", "tags": []}, [("难度 · 简单", "cyan")]),
+        ({"difficulty": "", "tags": []}, []),
+    ],
+)
+def test_problem_metadata_distinguishes_difficulty_and_tags(
+    problem: dict[str, Any], expected: list[tuple[str, str]]
+) -> None:
+    assert problem_metadata_items(problem) == expected
 
 
 def test_language_registration_requires_core_execution_fields() -> None:
+    assert LANGUAGE_LOADING_TEXT == "正在加载语言注册页面..."
     assert validate_language({"name": "", "file_ext": "", "run_cmd": ""}) == [
         "请输入语言名称。",
         "请输入源文件扩展名。",
@@ -592,14 +671,24 @@ def test_agent_task_overview_groups_populated_optional_fields() -> None:
     ]
 
 
-def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("selected_view", "expected"),
+    [
+        ("模型配置", "config"),
+        ("创建任务", "authoring"),
+        ("进度与结果", "tasks"),
+    ],
+)
+def test_agent_renders_only_selected_view(
+    monkeypatch: pytest.MonkeyPatch, selected_view: str, expected: str
+) -> None:
     rendered: list[str] = []
     monkeypatch.setattr(agent_page, "page_header", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(agent_page, "badges", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         agent_page.st,
         "segmented_control",
-        lambda *_args, **_kwargs: "创建任务",
+        lambda *_args, **_kwargs: selected_view,
     )
     monkeypatch.setattr(agent_page, "_config", lambda _api: rendered.append("config"))
     monkeypatch.setattr(
@@ -609,7 +698,7 @@ def test_agent_renders_only_selected_view(monkeypatch: pytest.MonkeyPatch) -> No
 
     agent_page.render_agent(object())  # type: ignore[arg-type]
 
-    assert rendered == ["authoring"]
+    assert rendered == [expected]
 
 
 def test_bridge_ticket_restores_cookie_then_authoritative_identity(
@@ -630,7 +719,9 @@ def test_bridge_ticket_restores_cookie_then_authoritative_identity(
     state: dict[str, Any] = {"auth_bridge_nonce": "nonce-a"}
     monkeypatch.setattr(
         "frontend.session.mount_auth_bridge",
-        lambda **_: SimpleNamespace(ticket="one-use-ticket", ticket_nonce="nonce-a"),
+        lambda **_: SimpleNamespace(
+            ticket_result={"ticket": "one-use-ticket", "nonce": "nonce-a"}
+        ),
     )
     client = ApiClient("http://test/api", transport=httpx.MockTransport(handler))
 
@@ -639,6 +730,12 @@ def test_bridge_ticket_restores_cookie_then_authoritative_identity(
     assert user == {"id": 7, "username": "alice", "role": "admin"}
     assert current_user(state) == user
     assert calls == ["/api/auth/bridge/exchange", "/api/users/me"]
+
+
+def test_browser_bridge_is_retryable_and_returns_ticket_atomically() -> None:
+    assert "__ojAuthBridgeNonces" not in _BRIDGE_JS
+    assert 'setStateValue("ticket_result", {ticket, nonce})' in _BRIDGE_JS
+    assert 'setStateValue("ticket", ticket)' not in _BRIDGE_JS
 
 
 def test_prepare_bridge_keeps_claim_ephemeral_in_streamlit_state() -> None:
@@ -761,6 +858,13 @@ def test_auth_loading_navigation_preserves_every_registered_route(
     assert [title for title, _ in pages] == list(NAVIGATION_METADATA)
     assert [title for title, default in pages if default] == ["首页"]
     assert navigation_run is True
+
+
+def test_auth_loading_navigation_is_registered_before_browser_sync() -> None:
+    source = Path(frontend_app.__file__).read_text(encoding="utf-8")
+    loading_position = source.index("run_auth_loading_navigation()", source.index("def main"))
+    sync_position = source.index("sync_browser_auth(api)", source.index("def main"))
+    assert loading_position < sync_position
 
 
 def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -994,6 +1098,10 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
         "动态规划",
     ]
     source = Path(agent_page.__file__).read_text(encoding="utf-8")
+    assert "[*DIFFICULTY_LEVELS, OTHER_OPTION]" in source
+    assert "[*PROBLEM_TYPES, OTHER_OPTION]" in source
+    assert '"其它难度"' in source
+    assert '"其它题型"' in source
     assert 'with st.expander("高级设置（选填）")' in source
     assert '"期望算法或复杂度",\n                placeholder=OPTIONAL_PLACEHOLDER' in source
     assert agent_page.VIEW_LOADING_TEXT == {
@@ -1001,6 +1109,7 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
         "创建任务": "正在加载命题选项...",
         "进度与结果": "正在加载任务进度...",
     }
+    assert 'with st.expander("验证报告", expanded=False)' in source
 
 
 def test_status_badges_use_distinct_accessible_classes(

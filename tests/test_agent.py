@@ -113,7 +113,7 @@ def test_agent_config_defaults_allow_large_structured_problem_output() -> None:
         model_name="test-model",
     )
     assert config.request_timeout == 360.0
-    assert config.max_output_tokens == 16384
+    assert config.max_output_tokens == 50000
 
 
 def authoring_payload() -> dict[str, Any]:
@@ -178,6 +178,7 @@ def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> No
     )
 
     assert result.problem.difficulty == "中等"
+    assert result.problem.problem_type == "算法设计"
     assert result.problem.tags[:2] == ["前缀和", "数组"]
     assert "sum" in result.problem.tags
 

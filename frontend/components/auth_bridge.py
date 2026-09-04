@@ -8,10 +8,7 @@ _BRIDGE_JS = r"""
 export default function(component) {
     const {data, setStateValue} = component;
     const nonce = String(data.nonce || "");
-    const seen = globalThis.__ojAuthBridgeNonces || new Set();
-    globalThis.__ojAuthBridgeNonces = seen;
-    if (!nonce || seen.has(nonce)) return;
-    seen.add(nonce);
+    if (!nonce) return;
 
     const headers = {"Content-Type": "application/json", "X-OJ-Bridge": "1"};
     const endpoint = `${String(data.baseUrl).replace(/\/$/, "")}/auth/bridge`;
@@ -35,8 +32,7 @@ export default function(component) {
                 const payload = await response.json();
                 const ticket = payload && payload.data && payload.data.ticket;
                 if (typeof ticket === "string") {
-                    setStateValue("ticket", ticket);
-                    setStateValue("ticket_nonce", nonce);
+                    setStateValue("ticket_result", {ticket, nonce});
                 }
             }
         } catch (_) {
@@ -62,7 +58,6 @@ def mount_auth_bridge(
     return _bridge_component(
         data={"baseUrl": base_url, "action": action, "nonce": nonce, "token": token},
         key="oj-auth-bridge",
-        on_ticket_change=lambda: None,
-        on_ticket_nonce_change=lambda: None,
+        on_ticket_result_change=lambda: None,
         on_status_change=lambda: None,
     )

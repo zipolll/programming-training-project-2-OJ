@@ -4,6 +4,17 @@ import re
 from typing import Any
 
 PROBLEM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+DIFFICULTY_LEVELS = ["入门", "简单", "中等", "困难"]
+PROBLEM_TYPES = [
+    "基础编程",
+    "算法设计",
+    "数据结构",
+    "数学",
+    "字符串",
+    "图论",
+    "动态规划",
+]
+OTHER_OPTION = "其它"
 
 NAVIGATION_LAYOUT = {
     "概览": ("首页",),
@@ -97,7 +108,23 @@ def build_problem_payload(values: dict[str, Any]) -> dict[str, Any]:
         "memory_limit": int(values.get("memory_limit", 128)),
         "author": str(values.get("author", "")),
         "difficulty": str(values.get("difficulty", "")),
+        "problem_type": str(values.get("problem_type", "")),
     }
+
+
+def resolve_catalogue_option(selected: str, other: str = "") -> str:
+    """Return a standard selection or the trimmed custom value for 其它."""
+    return other.strip() if selected == OTHER_OPTION else selected.strip()
+
+
+def catalogue_selection(value: Any, options: list[str], *, allow_empty: bool) -> str:
+    """Map persisted standard, custom, and legacy-empty values to a select option."""
+    normalized = str(value or "").strip()
+    if normalized in options:
+        return normalized
+    if normalized:
+        return OTHER_OPTION
+    return "" if allow_empty else options[0]
 
 
 def navigation_for(role: str | None) -> list[str]:

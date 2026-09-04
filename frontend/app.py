@@ -96,15 +96,24 @@ def main() -> None:
     st.set_page_config(page_title="Programming Training OJ", page_icon="⚖️", layout="wide")
     apply_theme()
     api = get_api_client()
+    initial_auth_pending = auth_resolution_pending(api)
+    if initial_auth_pending:
+        # Register navigation before mounting the browser bridge. On a cold
+        # start Streamlit may rerun while synchronizing the requested route;
+        # mounting the bridge first can discard its one-time response.
+        run_auth_loading_navigation()
     try:
         sync_browser_auth(api)
         if current_user() is None and api.has_cookies:
             restore_identity(api)
     except Exception as exc:
         show_error(exc)
-    if auth_resolution_pending(api):
-        run_auth_loading_navigation()
-        st.stop()
+    if initial_auth_pending:
+        if auth_resolution_pending(api):
+            st.stop()
+        # The loading navigation is already registered for this run. Start a
+        # clean run before constructing the role-aware navigation.
+        st.rerun()
     user = current_user()
     role = str(user.get("role")) if user else None
 

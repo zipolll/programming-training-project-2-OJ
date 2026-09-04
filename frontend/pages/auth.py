@@ -208,32 +208,37 @@ def render_user_admin(api: ApiClient) -> None:
         st.info("当前页没有用户。")
         render_pagination("user_admin", total=total)
         return
-    role_labels = {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}
-    display_users = [
-        {**item, "role": role_labels.get(str(item.get("role")), str(item.get("role")))}
-        for item in users
-    ]
-    st.dataframe(
-        display_users,
-        use_container_width=True,
-        hide_index=True,
-        column_order=(
-            "user_id",
-            "username",
-            "role",
-            "join_time",
-            "submit_count",
-            "resolve_count",
-        ),
-        column_config={
-            "user_id": st.column_config.TextColumn("用户 ID", width="small"),
-            "username": st.column_config.TextColumn("用户名", width="medium"),
-            "role": st.column_config.TextColumn("账号状态", width="small"),
-            "join_time": st.column_config.TextColumn("注册日期", width="medium"),
-            "submit_count": st.column_config.NumberColumn("提交次数", width="small"),
-            "resolve_count": st.column_config.NumberColumn("通过题目", width="small"),
-        },
-    )
+    role_display = {
+        "user": ("普通用户", "cyan"),
+        "admin": ("管理员", "orange"),
+        "banned": ("已禁用", "red"),
+    }
+    with st.container(key="user_catalog"):
+        with st.container(key="user_catalog_header"):
+            header = st.columns(
+                [1, 2, 1.2, 2, 1, 1], vertical_alignment="center"
+            )
+            for column, label in zip(
+                header,
+                ("用户 ID", "用户名", "账号状态", "注册日期", "提交次数", "通过题目"),
+                strict=True,
+            ):
+                column.markdown(f"**{label}**")
+        for item in users:
+            row = st.columns(
+                [1, 2, 1.2, 2, 1, 1], vertical_alignment="center"
+            )
+            row[0].write(item.get("user_id", "—"))
+            row[1].write(item.get("username", "—"))
+            role_value = str(item.get("role") or "")
+            role_label, role_tone = role_display.get(
+                role_value, (role_value or "—", "cyan")
+            )
+            with row[2]:
+                badges([(role_label, role_tone)])
+            row[3].write(item.get("join_time", "—"))
+            row[4].write(item.get("submit_count", 0))
+            row[5].write(item.get("resolve_count", 0))
 
     render_pagination("user_admin", total=total)
     section_header("角色调整", icon="⚠️")
