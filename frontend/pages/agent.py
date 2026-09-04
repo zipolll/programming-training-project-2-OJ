@@ -462,14 +462,18 @@ def _task_monitor(api: ApiClient) -> None:
     poll()
 
 
-def render_agent(api: ApiClient) -> None:
-    page_header(
-        "AI Agent 智能命题",
-        "把命题需求转化为经过多轮生成、执行验证和人工确认的完整题目。",
-        icon="🤖",
-        eyebrow="AI PROBLEM ARENA",
-        variant="ai",
-    )
+def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
+    if embedded:
+        section_header("AI 智能命题", icon="🤖")
+        st.caption("创建、验证并人工确认一套完整题目。")
+    else:
+        page_header(
+            "AI Agent 智能命题",
+            "把命题需求转化为经过多轮生成、执行验证和人工确认的完整题目。",
+            icon="🤖",
+            eyebrow="AI PROBLEM ARENA",
+            variant="ai",
+        )
     badges([("受控本地工具", "cyan"), ("多轮验证", "orange"), ("人工确认导入", "green")])
     selected_view = st.segmented_control(
         "功能",

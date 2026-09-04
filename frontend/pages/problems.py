@@ -1,6 +1,6 @@
 """Problem browsing and complete problem editing forms."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import streamlit as st
@@ -20,8 +20,17 @@ from frontend.data_access import (
     load_problem_summaries,
 )
 from frontend.models import build_problem_payload, validate_problem
+from frontend.pages.agent import render_agent
 
 PROBLEM_QUERY_KEY = "problem"
+
+
+def problem_detail_actions(role: str | None) -> list[str]:
+    """Return only actions authorized by the current role."""
+    actions = ["编辑"] if role in {"user", "admin"} else []
+    if role == "admin":
+        actions.append("删除")
+    return actions
 
 
 def filter_problem_summaries(
@@ -133,7 +142,10 @@ def _render_problem_submission_tools(
 
 
 def render_problem_detail(
-    api: ApiClient, problem_id: str, user: dict[str, Any]
+    api: ApiClient,
+    problem_id: str,
+    user: dict[str, Any],
+    on_manage: Callable[[str, str], None] | None = None,
 ) -> None:
     st.button("← 返回题目列表", on_click=_close_problem)
     with st.spinner("正在加载题目详情..."):
@@ -157,6 +169,22 @@ def render_problem_detail(
     metadata.extend((str(tag), "orange") for tag in problem.get("tags", []))
     if metadata:
         badges(metadata)
+
+    actions = problem_detail_actions(str(user.get("role") or ""))
+    if on_manage is not None and actions:
+        action_columns = st.columns([1, 1, 6])
+        action_columns[0].button(
+            "编辑题目",
+            type="primary",
+            on_click=on_manage,
+            args=(problem["id"], "编辑"),
+        )
+        if "删除" in actions:
+            action_columns[1].button(
+                "删除题目",
+                on_click=on_manage,
+                args=(problem["id"], "删除"),
+            )
 
     time_col, memory_col = st.columns(2)
     with time_col:
@@ -188,10 +216,14 @@ def render_problem_detail(
     _render_problem_submission_tools(api, problem, user)
 
 
-def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
+def render_problem_list(
+    api: ApiClient,
+    user: dict[str, Any],
+    on_manage: Callable[[str, str], None] | None = None,
+) -> None:
     requested_problem = _requested_problem_id()
     if requested_problem:
-        render_problem_detail(api, requested_problem, user)
+        render_problem_detail(api, requested_problem, user, on_manage)
         return
 
     page_header(
@@ -352,18 +384,43 @@ def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any]
 
 def render_problem_management(api: ApiClient, is_admin: bool) -> None:
     page_header(
-        "题目工坊",
-        "创建完整题目、调整内容，管理员还可以执行删除操作。",
-        icon="🛠️",
-        eyebrow="PROBLEM WORKSHOP",
+        "命题中心",
+        "选择手动编辑完整题目，或使用 AI 辅助创建新题。",
+        icon="✨",
+        eyebrow="PROBLEM CREATION CENTER",
     )
+    authoring_mode = st.segmented_control(
+        "命题方式",
+        ["普通命题", "AI 智能命题"],
+        default="普通命题",
+        key="problem_authoring_mode",
+        label_visibility="collapsed",
+    )
+    if authoring_mode == "AI 智能命题":
+        render_agent(api, embedded=True)
+        return
+
+    section_header("普通命题", icon="📝")
     section_header("操作", icon="🎛️")
     options = ["新增", "编辑", "删除"] if is_admin else ["新增", "编辑"]
-    mode = st.radio("操作", options, horizontal=True, label_visibility="collapsed")
+    requested_mode = st.session_state.get("problem_management_action")
+    if requested_mode not in options:
+        st.session_state["problem_management_action"] = "新增"
+    mode = st.radio(
+        "操作",
+        options,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="problem_management_action",
+    )
     initial = None
     problem_id = ""
     if mode in {"编辑", "删除"}:
-        problem_id = st.text_input("要操作的题目 ID", placeholder=REQUIRED_PLACEHOLDER)
+        problem_id = st.text_input(
+            "要操作的题目 ID",
+            placeholder=REQUIRED_PLACEHOLDER,
+            key="problem_management_problem_id",
+        )
         if not problem_id:
             return
         if mode == "删除":

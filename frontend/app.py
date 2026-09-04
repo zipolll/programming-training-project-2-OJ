@@ -9,7 +9,6 @@ from frontend.components.theme import apply_theme
 from frontend.components.ui import badges, feature_grid, page_header, section_header
 from frontend.data_access import load_service_status
 from frontend.models import NAVIGATION_METADATA, navigation_sections
-from frontend.pages.agent import render_agent
 from frontend.pages.auth import (
     render_login,
     render_logout,
@@ -125,13 +124,23 @@ def main() -> None:
             }
         )
     else:
+        problem_management_page = _page(
+            lambda: render_problem_management(api, role == "admin"), "题目管理"
+        )
+
+        def open_problem_management(problem_id: str, action: str) -> None:
+            st.session_state["problem_authoring_mode"] = "普通命题"
+            st.session_state["problem_management_action"] = action
+            st.session_state["problem_management_problem_id"] = problem_id
+            st.switch_page(problem_management_page)
+
         renderers.update(
             {
-                "题目列表": _page(lambda: render_problem_list(api, user), "题目列表"),
-                "题目管理": _page(
-                    lambda: render_problem_management(api, role == "admin"), "题目管理"
+                "题目列表": _page(
+                    lambda: render_problem_list(api, user, open_problem_management),
+                    "题目列表",
                 ),
-                "AI 智能命题": _page(lambda: render_agent(api), "AI 智能命题"),
+                "题目管理": problem_management_page,
                 "提交代码": _page(lambda: render_submit(api), "提交代码"),
                 "提交记录": _page(
                     lambda: render_submission_list(api, user, role == "admin"), "提交记录"

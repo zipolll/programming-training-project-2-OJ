@@ -36,7 +36,7 @@ from frontend.models import (
 )
 from frontend.pages import agent as agent_page
 from frontend.pages import auth as auth_page
-from frontend.pages.problems import filter_problem_summaries
+from frontend.pages.problems import filter_problem_summaries, problem_detail_actions
 from frontend.pages.submissions import resolve_submission_user_id
 from frontend.session import (
     auth_resolution_pending,
@@ -285,6 +285,12 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
     assert [
         item["id"] for item in filter_problem_summaries(problems, difficulty="困难")
     ] == ["P1002"]
+
+
+def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
+    assert problem_detail_actions(None) == []
+    assert problem_detail_actions("user") == ["编辑"]
+    assert problem_detail_actions("admin") == ["编辑", "删除"]
 
 
 @pytest.mark.parametrize(
@@ -681,7 +687,8 @@ def test_navigation_is_role_aware() -> None:
     assert "登录" in anonymous and "提交代码" not in anonymous
     assert "题目列表" not in anonymous
     assert "提交代码" in regular and "用户管理" not in regular
-    assert "AI 智能命题" in regular
+    assert "题目管理" in regular
+    assert "AI 智能命题" not in regular
     assert {"用户管理", "日志可见性"} <= set(admin)
 
 
@@ -699,9 +706,9 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
         "概览": ["首页"],
         "账户": ["注册", "登录"],
     }
-    assert navigation_sections("user")["题目"][-1] == "AI 智能命题"
+    assert navigation_sections("user")["题目"] == ["题目列表", "题目管理"]
     assert navigation_sections("user")["评测"] == ["提交代码", "提交记录"]
-    assert navigation_sections("admin")["题目"][-1] == "AI 智能命题"
+    assert navigation_sections("admin")["题目"] == ["题目列表", "题目管理"]
     assert navigation_sections("admin")["评测"][-1] == "日志可见性"
 
 
