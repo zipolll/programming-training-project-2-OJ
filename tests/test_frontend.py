@@ -291,6 +291,11 @@ def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
     assert problem_detail_actions(None) == []
     assert problem_detail_actions("user") == ["编辑"]
     assert problem_detail_actions("admin") == ["编辑", "删除"]
+    source = Path(__file__).parents[1] / "frontend" / "pages" / "problems.py"
+    content = source.read_text(encoding="utf-8")
+    assert 'section_header("新建普通题目"' in content
+    assert 'options = ["新增", "编辑", "删除"]' not in content
+    assert "我确认永久删除该题目。" in content
 
 
 @pytest.mark.parametrize(
@@ -879,12 +884,16 @@ def test_admin_profile_uses_admin_identity_header(monkeypatch: pytest.MonkeyPatc
     assert headers == [("管理员中心", {"icon": "🛡️", "eyebrow": "ADMIN ACCOUNT"})]
 
 
-def test_problem_operation_radio_hides_redundant_label() -> None:
+def test_problem_management_contains_only_creation_modes() -> None:
     frontend = Path(__file__).parents[1] / "frontend"
     source = (frontend / "pages" / "problems.py").read_text(encoding="utf-8")
-    assert 'section_header("操作", icon="🎛️")' in source
+    assert '["普通命题", "AI 智能命题"]' in source
+    assert 'section_header("新建普通题目", icon="📝")' in source
     assert 'label_visibility="collapsed"' in source
-    assert "选择操作" not in source
+    assert 'section_header("操作", icon="🎛️")' not in source
+    assert 'section_header("编辑题目", icon="✏️")' in source
+    assert 'section_header("确认删除", icon="🚨")' in source
+    assert "我确认永久删除该题目。" in source
 
 
 def test_submission_state_and_accessible_labels() -> None:

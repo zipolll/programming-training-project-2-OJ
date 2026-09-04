@@ -125,21 +125,12 @@ def main() -> None:
         )
     else:
         problem_management_page = _page(
-            lambda: render_problem_management(api, role == "admin"), "题目管理"
+            lambda: render_problem_management(api), "题目管理"
         )
-
-        def open_problem_management(problem_id: str, action: str) -> None:
-            st.session_state["problem_authoring_mode"] = "普通命题"
-            st.session_state["problem_management_action"] = action
-            st.session_state["problem_management_problem_id"] = problem_id
-            st.switch_page(problem_management_page)
 
         renderers.update(
             {
-                "题目列表": _page(
-                    lambda: render_problem_list(api, user, open_problem_management),
-                    "题目列表",
-                ),
+                "题目列表": _page(lambda: render_problem_list(api, user), "题目列表"),
                 "题目管理": problem_management_page,
                 "提交代码": _page(lambda: render_submit(api), "提交代码"),
                 "提交记录": _page(

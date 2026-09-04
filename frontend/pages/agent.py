@@ -474,7 +474,6 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
             eyebrow="AI PROBLEM ARENA",
             variant="ai",
         )
-    badges([("受控本地工具", "cyan"), ("多轮验证", "orange"), ("人工确认导入", "green")])
     selected_view = st.segmented_control(
         "功能",
         ["模型配置", "创建任务", "进度与结果"],

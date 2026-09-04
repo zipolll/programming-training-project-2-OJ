@@ -1,6 +1,6 @@
 """Problem browsing and complete problem editing forms."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import streamlit as st
@@ -65,11 +65,17 @@ def _requested_problem_id() -> str:
 
 def _open_problem(problem_id: str) -> None:
     st.query_params[PROBLEM_QUERY_KEY] = problem_id
+    st.session_state.pop("problem_detail_action", None)
 
 
 def _close_problem() -> None:
+    st.session_state.pop("problem_detail_action", None)
     if PROBLEM_QUERY_KEY in st.query_params:
         del st.query_params[PROBLEM_QUERY_KEY]
+
+
+def _select_detail_action(action: str) -> None:
+    st.session_state["problem_detail_action"] = action
 
 
 def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
@@ -145,7 +151,6 @@ def render_problem_detail(
     api: ApiClient,
     problem_id: str,
     user: dict[str, Any],
-    on_manage: Callable[[str, str], None] | None = None,
 ) -> None:
     st.button("← 返回题目列表", on_click=_close_problem)
     with st.spinner("正在加载题目详情..."):
@@ -170,20 +175,21 @@ def render_problem_detail(
     if metadata:
         badges(metadata)
 
-    actions = problem_detail_actions(str(user.get("role") or ""))
-    if on_manage is not None and actions:
+    role = str(user.get("role") or "")
+    actions = problem_detail_actions(role)
+    if actions:
         action_columns = st.columns([1, 1, 6])
         action_columns[0].button(
             "编辑题目",
             type="primary",
-            on_click=on_manage,
-            args=(problem["id"], "编辑"),
+            on_click=_select_detail_action,
+            args=("编辑",),
         )
         if "删除" in actions:
             action_columns[1].button(
                 "删除题目",
-                on_click=on_manage,
-                args=(problem["id"], "删除"),
+                on_click=_select_detail_action,
+                args=("删除",),
             )
 
     time_col, memory_col = st.columns(2)
@@ -213,17 +219,53 @@ def render_problem_detail(
         if problem.get("hint"):
             with st.expander("查看提示"):
                 st.markdown(problem["hint"])
+
+    detail_action = st.session_state.get("problem_detail_action")
+    if detail_action == "编辑":
+        section_header("编辑题目", icon="✏️")
+        payload = _problem_form(problem, f"detail_edit_{problem['id']}")
+        if payload is not None:
+            errors = validate_problem(payload)
+            if errors:
+                for message in errors:
+                    st.error(message)
+            else:
+                try:
+                    api.put(f"/problems/{problem['id']}", json=payload)
+                except Exception as exc:
+                    show_error(exc)
+                else:
+                    invalidate_problem_cache()
+                    st.success("题目保存成功。")
+    elif detail_action == "删除" and role == "admin":
+        section_header("确认删除", icon="🚨")
+        st.warning("删除后无法恢复，请确认当前题目不再需要。")
+        confirmed = st.checkbox(
+            "我确认永久删除该题目。",
+            key=f"detail_delete_confirm_{problem['id']}",
+        )
+        if st.button(
+            "确认删除",
+            type="primary",
+            disabled=not confirmed,
+            key=f"detail_delete_{problem['id']}",
+        ):
+            try:
+                api.delete(f"/problems/{problem['id']}")
+            except Exception as exc:
+                show_error(exc)
+            else:
+                invalidate_problem_cache()
+                _close_problem()
+                st.session_state["problem_notice"] = "题目删除成功。"
+                st.rerun()
     _render_problem_submission_tools(api, problem, user)
 
 
-def render_problem_list(
-    api: ApiClient,
-    user: dict[str, Any],
-    on_manage: Callable[[str, str], None] | None = None,
-) -> None:
+def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
     requested_problem = _requested_problem_id()
     if requested_problem:
-        render_problem_detail(api, requested_problem, user, on_manage)
+        render_problem_detail(api, requested_problem, user)
         return
 
     page_header(
@@ -232,6 +274,9 @@ def render_problem_list(
         icon="📚",
         eyebrow="CHALLENGE LIBRARY",
     )
+    notice = st.session_state.pop("problem_notice", None)
+    if notice:
+        st.success(str(notice))
     try:
         with st.spinner("正在加载题目..."):
             problems = load_problem_summaries(api.base_url, api)
@@ -382,7 +427,7 @@ def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any]
     )
 
 
-def render_problem_management(api: ApiClient, is_admin: bool) -> None:
+def render_problem_management(api: ApiClient) -> None:
     page_header(
         "命题中心",
         "选择手动编辑完整题目，或使用 AI 辅助创建新题。",
@@ -400,45 +445,8 @@ def render_problem_management(api: ApiClient, is_admin: bool) -> None:
         render_agent(api, embedded=True)
         return
 
-    section_header("普通命题", icon="📝")
-    section_header("操作", icon="🎛️")
-    options = ["新增", "编辑", "删除"] if is_admin else ["新增", "编辑"]
-    requested_mode = st.session_state.get("problem_management_action")
-    if requested_mode not in options:
-        st.session_state["problem_management_action"] = "新增"
-    mode = st.radio(
-        "操作",
-        options,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="problem_management_action",
-    )
-    initial = None
-    problem_id = ""
-    if mode in {"编辑", "删除"}:
-        problem_id = st.text_input(
-            "要操作的题目 ID",
-            placeholder=REQUIRED_PLACEHOLDER,
-            key="problem_management_problem_id",
-        )
-        if not problem_id:
-            return
-        if mode == "删除":
-            section_header("危险区域", icon="🚨")
-            confirmed = st.checkbox("我确认永久删除该题目。")
-            if st.button("删除题目", type="primary", disabled=not confirmed):
-                try:
-                    api.delete(f"/problems/{problem_id}")
-                except Exception as exc:
-                    show_error(exc)
-                else:
-                    invalidate_problem_cache()
-                    st.success("题目删除成功。")
-            return
-        initial = _load_problem(api, problem_id)
-        if initial is None:
-            return
-    payload = _problem_form(initial, f"problem_{mode}_{problem_id}")
+    section_header("新建普通题目", icon="📝")
+    payload = _problem_form(None, "problem_create")
     if payload is None:
         return
     errors = validate_problem(payload)
@@ -447,11 +455,7 @@ def render_problem_management(api: ApiClient, is_admin: bool) -> None:
             st.error(message)
         return
     try:
-        if mode == "新增":
-            api.post("/problems/", json=payload)
-        else:
-            api.put(f"/problems/{problem_id}", json=payload)
-            _load_problem(api, problem_id)
+        api.post("/problems/", json=payload)
     except Exception as exc:
         show_error(exc)
     else:

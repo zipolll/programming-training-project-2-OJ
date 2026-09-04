@@ -354,13 +354,27 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
   background: linear-gradient(115deg, var(--oj-primary-dark), #6d28d9);
 }
 [data-testid="stSegmentedControl"] {
-  margin: .35rem 0 1rem;
+  display: flex;
+  justify-content: center;
+  margin: .75rem 0 1.4rem;
+}
+[data-testid="stSegmentedControl"] [role="radiogroup"] {
+  display: inline-flex;
+  width: auto;
+  gap: .42rem;
+  padding: .38rem;
+  border: 1px solid rgba(91,92,240,.16);
+  border-radius: 999px;
+  background: rgba(255,255,255,.78);
+  box-shadow: 0 8px 22px rgba(73,80,135,.08);
 }
 [data-testid="stSegmentedControl"] button {
-  min-height: 2.65rem;
-  border-color: var(--oj-line) !important;
+  min-height: 2.85rem;
+  padding: .45rem 1.35rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
   color: #344054 !important;
-  background: rgba(255,255,255,.9) !important;
+  background: transparent !important;
   box-shadow: none !important;
   font-weight: 750;
 }
@@ -368,11 +382,12 @@ button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
   color: var(--oj-primary-dark) !important;
   background: #f5f3ff !important;
 }
-[data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-  border-color: rgba(91,92,240,.35) !important;
-  color: #3730a3 !important;
-  background: #eef2ff !important;
-  box-shadow: inset 0 -3px 0 var(--oj-primary) !important;
+[data-testid="stSegmentedControl"] button[aria-pressed="true"],
+[data-testid="stSegmentedControl"] button[aria-checked="true"] {
+  border-color: rgba(91,92,240,.22) !important;
+  color: #ffffff !important;
+  background: linear-gradient(120deg, var(--oj-primary), #7c3aed) !important;
+  box-shadow: 0 7px 16px rgba(91,92,240,.22) !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
   gap: 1.4rem;
