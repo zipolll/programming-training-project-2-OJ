@@ -6,8 +6,9 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import REQUIRED_PLACEHOLDER, show_error
+from frontend.components.layout import cell_text, data_table, section_card, table_row
 from frontend.components.pagination import pagination_values, render_pagination
-from frontend.components.ui import badges, info_card, page_header, section_header
+from frontend.components.ui import badges, info_card, list_count, page_header, section_header
 from frontend.errors import ApiError
 from frontend.models import validate_login, validate_registration
 from frontend.session import (
@@ -70,21 +71,19 @@ def render_register(api: ApiClient, on_success: Callable[[], None] | None = None
 
 
 def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -> None:
-    content = st.empty()
-    with content.container():
-        page_header(
-            "欢迎回来",
-            "登录后继续你的算法训练和评测挑战。",
-            icon="🔐",
-            eyebrow="PLAYER SIGN IN",
+    page_header(
+        "欢迎回来",
+        "登录后继续你的算法训练和评测挑战。",
+        icon="🔐",
+        eyebrow="PLAYER SIGN IN",
+    )
+    section_header("登录信息", icon="👤")
+    with st.form("login_form"):
+        username = st.text_input("用户名", placeholder=REQUIRED_PLACEHOLDER)
+        password = st.text_input(
+            "密码", type="password", placeholder=REQUIRED_PLACEHOLDER
         )
-        section_header("登录信息", icon="👤")
-        with st.form("login_form"):
-            username = st.text_input("用户名", placeholder=REQUIRED_PLACEHOLDER)
-            password = st.text_input(
-                "密码", type="password", placeholder=REQUIRED_PLACEHOLDER
-            )
-            submitted = st.form_submit_button("登录", type="primary")
+        submitted = st.form_submit_button("登录", type="primary")
     if not submitted:
         return
     errors = validate_login(username, password)
@@ -92,18 +91,11 @@ def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -
         for message in errors:
             st.error(message)
         return
-    content.empty()
-    with content.container():
-        page_header(
-            "正在登录",
-            "马上回到你的页面。",
-            icon="⏳",
-            eyebrow="SIGNING IN",
-        )
     try:
-        api.post("/auth/login", json={"username": username, "password": password})
-        user = restore_identity(api)
-        prepare_browser_bridge(api)
+        with st.spinner("正在登录..."):
+            api.post("/auth/login", json={"username": username, "password": password})
+            user = restore_identity(api)
+            prepare_browser_bridge(api)
     except ApiError as exc:
         if exc.status_code == 403 and "banned" in exc.message.lower():
             st.error("该用户已被禁用，无法登录。")
@@ -203,7 +195,7 @@ def render_user_admin(api: ApiClient) -> None:
         return
     users = result.get("users", [])
     total = int(result.get("total", 0))
-    st.caption(f"共 {total} 位用户")
+    list_count(total)
     if not users:
         st.info("当前页没有用户。")
         render_pagination("user_admin", total=total)
@@ -213,48 +205,43 @@ def render_user_admin(api: ApiClient) -> None:
         "admin": ("管理员", "orange"),
         "banned": ("已禁用", "red"),
     }
-    with st.container(key="user_catalog"):
-        with st.container(key="user_catalog_header"):
-            header = st.columns(
-                [1, 2, 1.2, 2, 1, 1], vertical_alignment="center"
-            )
-            for column, label in zip(
-                header,
-                ("用户 ID", "用户名", "账号状态", "注册日期", "提交次数", "通过题目"),
-                strict=True,
-            ):
-                column.markdown(f"**{label}**")
+    labels = ("用户 ID", "用户名", "账号状态", "注册日期", "提交次数", "通过题目")
+    widths = (1, 2, 1.2, 2, 1, 1)
+    with data_table(labels, widths, key="users"):
         for item in users:
-            row = st.columns(
-                [1, 2, 1.2, 2, 1, 1], vertical_alignment="center"
-            )
-            row[0].write(item.get("user_id", "—"))
-            row[1].write(item.get("username", "—"))
-            role_value = str(item.get("role") or "")
-            role_label, role_tone = role_display.get(
-                role_value, (role_value or "—", "cyan")
-            )
-            with row[2]:
-                badges([(role_label, role_tone)])
-            row[3].write(item.get("join_time", "—"))
-            row[4].write(item.get("submit_count", 0))
-            row[5].write(item.get("resolve_count", 0))
+            with table_row(labels, widths, key=f"user_{item['user_id']}") as row:
+                with row[0]:
+                    cell_text(item.get("user_id"), tone="muted")
+                with row[1]:
+                    cell_text(item.get("username"), emphasis=True)
+                role_value = str(item.get("role") or "")
+                role_label, role_tone = role_display.get(
+                    role_value, (role_value or "—", "cyan")
+                )
+                with row[2]:
+                    badges([(role_label, role_tone)])
+                with row[3]:
+                    cell_text(item.get("join_time"), tone="muted")
+                with row[4]:
+                    cell_text(item.get("submit_count", 0), emphasis=True, tone="success")
+                with row[5]:
+                    cell_text(item.get("resolve_count", 0), emphasis=True, tone="success")
 
     render_pagination("user_admin", total=total)
-    section_header("角色调整", icon="⚠️")
-    target = st.selectbox(
-        "选择用户",
-        users,
-        format_func=lambda item: f"{item['username']}（{item['role']}）",
-    )
-    role = st.selectbox("新角色", ["user", "admin", "banned"])
-    confirmed = st.checkbox("我确认修改该用户角色；封禁后该账号将立即退出登录。")
-    if st.button("修改角色", disabled=not confirmed, type="primary"):
-        try:
-            api.put(f"/users/{target['user_id']}/role", json={"role": role})
-        except Exception as exc:
-            show_error(exc)
-        else:
-            clear_session_cache("users:")
-            st.success("用户角色修改成功。")
-            st.rerun()
+    with section_card("角色调整", key="user_role", icon="⚠️", tone="warning"):
+        target = st.selectbox(
+            "选择用户",
+            users,
+            format_func=lambda item: f"{item['username']}（{item['role']}）",
+        )
+        role = st.selectbox("新角色", ["user", "admin", "banned"])
+        confirmed = st.checkbox("我确认修改该用户角色；封禁后该账号将立即退出登录。")
+        if st.button("修改角色", disabled=not confirmed, type="primary"):
+            try:
+                api.put(f"/users/{target['user_id']}/role", json={"role": role})
+            except Exception as exc:
+                show_error(exc)
+            else:
+                clear_session_cache("users:")
+                st.success("用户角色修改成功。")
+                st.rerun()

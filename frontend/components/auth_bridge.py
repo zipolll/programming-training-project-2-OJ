@@ -21,6 +21,15 @@ export default function(component) {
                 const response = await fetch(`${endpoint}/claim`, options);
                 setStateValue("status", `${response.ok ? "claimed" : "failed"}:${nonce}`);
             } else if (data.action === "clear") {
+                try {
+                    const owner = sessionStorage.getItem("oj-code-user");
+                    for (const key of Object.keys(sessionStorage)) {
+                        if (owner && key.startsWith(`oj-code:${owner}:`)) {
+                            sessionStorage.removeItem(key);
+                        }
+                    }
+                    sessionStorage.removeItem("oj-code-user");
+                } catch (_) { /* Storage access must not prevent server logout. */ }
                 await fetch(`${endpoint}/clear`, options);
                 setStateValue("status", `cleared:${nonce}`);
             } else if (data.action === "restore") {

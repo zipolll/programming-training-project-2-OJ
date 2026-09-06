@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable, Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -26,6 +27,18 @@ class ApiClient:
             base_url or os.getenv("OJ_FRONTEND_API_BASE_URL", DEFAULT_API_BASE_URL)
         ).rstrip("/")
         self._on_unauthorized = on_unauthorized
+        if transport is None and urlsplit(self.base_url).hostname in {
+            "localhost", "127.0.0.1", "::1",
+        }:
+            # The dev server listens on IPv4. On Windows, trying localhost's
+            # IPv6 address first adds ~2 seconds whenever a connection opens
+            # (including after the keep-alive timeout). Bind only localhost
+            # to IPv4, preserving the URL/Host and cookie domain. Explicit
+            # IPv6 URLs remain IPv6; loopback traffic never needs a proxy.
+            transport = httpx.HTTPTransport(
+                local_address="0.0.0.0"
+                if urlsplit(self.base_url).hostname == "localhost" else None,
+            )
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=timeout,

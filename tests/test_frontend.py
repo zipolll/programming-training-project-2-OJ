@@ -337,7 +337,7 @@ def test_problem_catalogue_uses_first_tag_and_difficulty_colours() -> None:
     assert difficulty_tone("竞赛级") == "purple"
     source = Path(__file__).parents[1] / "frontend" / "pages" / "problems.py"
     content = source.read_text(encoding="utf-8")
-    assert content.count('vertical_alignment="center"') >= 2
+    assert 'with data_table(labels, widths, key=f"{key}_table")' in content
 
 
 def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
@@ -815,7 +815,8 @@ def test_navigation_is_role_aware() -> None:
     assert "注册新语言" in regular
     assert "题目管理" in regular
     assert "AI 智能命题" not in regular
-    assert {"用户管理", "日志可见性", "访问审计"} <= set(admin)
+    assert {"用户管理", "访问审计"} <= set(admin)
+    assert "日志可见性" not in admin
 
 
 def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
@@ -832,12 +833,11 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
         "概览": ["首页"],
         "账户": ["注册", "登录"],
     }
-    assert navigation_sections("user")["题目"] == ["题目列表", "题目管理"]
+    assert navigation_sections("user")["题目"] == ["题目列表", "我的题库", "题目管理"]
     assert navigation_sections("user")["评测"] == ["提交记录", "注册新语言"]
-    assert navigation_sections("admin")["题目"] == ["题目列表", "题目管理"]
+    assert navigation_sections("admin")["题目"] == ["题目列表", "我的题库", "题目管理"]
     assert navigation_sections("admin")["管理"] == [
         "用户管理",
-        "日志可见性",
         "访问审计",
     ]
 
@@ -927,7 +927,7 @@ def test_login_and_logout_use_navigation_callback(monkeypatch: pytest.MonkeyPatc
 
     assert calls == ["/auth/login", "/auth/logout"]
     assert transitions == ["login-home", "cleared", "logout-home"]
-    assert headers[:2] == ["欢迎回来", "正在登录"]
+    assert headers == ["欢迎回来", "退出训练场"]
 
 
 def test_registration_logs_in_and_uses_navigation_callback(
@@ -1127,7 +1127,7 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
     assert '"其它难度"' in source
     assert '"其它题型"' in source
     assert 'with st.expander("高级设置（选填）")' in source
-    assert '"期望算法或复杂度",\n                placeholder=OPTIONAL_PLACEHOLDER' in source
+    assert re.search(r'"期望算法或复杂度",\s+placeholder=OPTIONAL_PLACEHOLDER', source)
     assert agent_page.VIEW_LOADING_TEXT == {
         "模型配置": "正在加载模型配置...",
         "创建任务": "正在加载命题选项...",

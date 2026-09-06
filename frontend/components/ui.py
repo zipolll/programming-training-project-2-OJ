@@ -62,6 +62,11 @@ def badges(items: list[tuple[str, str]]) -> None:
     st.markdown(f'<div class="oj-badges">{content}</div>', unsafe_allow_html=True)
 
 
+def list_count(total: int) -> None:
+    """One consistent total badge for every list; page position lives in pagination."""
+    badges([(f"共 {total} 条", "cyan")])
+
+
 def info_card(
     label: str, value: Any, *, icon: str = "", compact: bool = False
 ) -> None:
@@ -117,7 +122,7 @@ def timeline_event(timestamp: Any, stage: Any, message: Any) -> None:
     )
 
 
-def status_badge(status: str) -> None:
+def status_tone(status: str) -> str:
     normalized = status.lower()
     tone = {
         "success": "green",
@@ -127,9 +132,16 @@ def status_badge(status: str) -> None:
         "error": "red",
         "cancelled": "red",
         "wa": "red",
-        "ce": "red",
-        "re": "red",
-        "tle": "orange",
-        "mle": "orange",
-    }.get(normalized, "cyan")
-    badges([(status, tone)])
+        "ce": "blue",
+        "re": "orange",
+        "tle": "yellow",
+        "mle": "yellow",
+        "unk": "gray",
+    }.get(normalized, "gray")
+    return tone
+
+
+def status_badge(status: str) -> None:
+    from frontend.models import status_text
+
+    badges([(status_text(status), status_tone(status))])

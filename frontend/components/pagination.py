@@ -2,6 +2,8 @@
 
 import streamlit as st
 
+from frontend.navigation import update_route
+
 DEFAULT_PAGE_SIZE = 10
 
 
@@ -26,25 +28,36 @@ def pagination_values(
 ) -> tuple[int, int]:
     """Read the requested page without making or caching any API request."""
     page_key = f"{key}_page"
-    st.session_state.setdefault(page_key, 1)
-    return max(1, int(st.session_state[page_key])), default_page_size
+    try:
+        page = max(1, int(st.query_params.get(page_key, 1)))
+    except (ValueError, TypeError):
+        page = 1
+    # A locally clamped page never creates a history entry during rendering.
+    override = st.session_state.get(f"{page_key}_clamped")
+    if override and override[0] == page:
+        page = override[1]
+    st.session_state[page_key] = page
+    return page, default_page_size
 
 
 def reset_pagination(key: str) -> None:
     """Return a paginated view to its first page after filters change."""
     st.session_state[f"{key}_page"] = 1
+    update_route(**{f"{key}_page": 1})
 
 
 def _set_page(key: str, page: int) -> None:
     st.session_state[f"{key}_page"] = page
+    st.session_state.pop(f"{key}_page_clamped", None)
+    update_route(**{f"{key}_page": page})
 
 
-def render_pagination(key: str, *, total: int) -> None:
+def render_pagination(key: str, *, total: int, page_size: int = DEFAULT_PAGE_SIZE) -> None:
     """Render first, nearby pages, next, last and the current-page summary."""
-    page, page_size = pagination_values(key)
+    page, page_size = pagination_values(key, default_page_size=page_size)
     pages = page_count(total, page_size)
     if page > pages:
-        st.session_state[f"{key}_page"] = pages
+        st.session_state[f"{key}_page_clamped"] = (page, pages)
         st.rerun()
 
     numbers = page_window(page, pages)

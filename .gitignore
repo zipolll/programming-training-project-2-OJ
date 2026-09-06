@@ -34,3 +34,4 @@ data/problems/.*.tmp
 judge-workspace/
 *.exe
 *.out
+node_modules/

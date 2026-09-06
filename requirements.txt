@@ -1,7 +1,7 @@
 fastapi>=0.115,<1
 uvicorn[standard]>=0.34,<1
 pydantic-settings>=2.7,<3
-streamlit>=1.41,<2
+streamlit>=1.63,<2
 httpx>=0.28,<1
 bcrypt>=4.2,<5
 aiosqlite>=0.20,<1

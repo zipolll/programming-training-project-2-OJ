@@ -5,3 +5,6 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 .githooks/* text eol=lf
+
+# Generated CodeMirror snippets contain intentional indentation in template literals.
+frontend/components/editor/editor.bundle.js text eol=lf whitespace=-blank-at-eol

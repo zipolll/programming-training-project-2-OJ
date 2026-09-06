@@ -1,23 +1,32 @@
 """Problem browsing and complete problem editing forms."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import streamlit as st
 
 from frontend.api_client import ApiClient
+from frontend.components.code_editor import render_code_submission
 from frontend.components.common import (
     OPTIONAL_PLACEHOLDER,
     REQUIRED_PLACEHOLDER,
-    render_status,
     show_error,
 )
-from frontend.components.pagination import pagination_values, render_pagination, reset_pagination
+from frontend.components.layout import cell_text, data_table, section_card, table_row
+from frontend.components.pagination import pagination_values, render_pagination
 from frontend.components.submission_table import render_submission_table
-from frontend.components.ui import badges, empty_state, info_card, page_header, section_header
+from frontend.components.ui import (
+    badges,
+    empty_state,
+    info_card,
+    list_count,
+    page_header,
+    section_header,
+)
 from frontend.data_access import (
     invalidate_problem_cache,
     load_language_names,
+    load_problem_detail,
     load_problem_summaries,
 )
 from frontend.models import (
@@ -29,6 +38,7 @@ from frontend.models import (
     resolve_catalogue_option,
     validate_problem,
 )
+from frontend.navigation import open_submission, restore_widget, save_widgets, update_route
 from frontend.pages.agent import render_agent
 
 PROBLEM_QUERY_KEY = "problem"
@@ -114,18 +124,18 @@ def _requested_problem_id() -> str:
 
 
 def _open_problem(problem_id: str) -> None:
-    st.query_params[PROBLEM_QUERY_KEY] = problem_id
+    update_route(problem=problem_id, action=None)
     st.session_state.pop("problem_detail_action", None)
     st.session_state.pop("problem_submission_selected", None)
 
 
 def _close_problem() -> None:
     st.session_state.pop("problem_detail_action", None)
-    if PROBLEM_QUERY_KEY in st.query_params:
-        del st.query_params[PROBLEM_QUERY_KEY]
+    update_route(problem=None, action=None)
 
 
 def _select_detail_action(action: str) -> None:
+    update_route(action=action)
     if action:
         st.session_state["problem_detail_action"] = action
     else:
@@ -134,7 +144,7 @@ def _select_detail_action(action: str) -> None:
 
 def _load_problem(api: ApiClient, problem_id: str) -> dict[str, Any] | None:
     try:
-        return api.get(f"/problems/{problem_id}")["data"]
+        return load_problem_detail(api, problem_id)
     except Exception as exc:
         show_error(exc)
         return None
@@ -149,44 +159,16 @@ def _render_problem_submission_tools(
         icon="⚡",
         eyebrow=f"PROBLEM {problem['id']}",
     )
-    section_header("代码与运行环境", icon="💻")
     try:
         languages = load_language_names(api.base_url, api)
     except Exception as exc:
         show_error(exc)
         languages = []
     if languages:
-        with st.form(f"problem_submission_{problem['id']}"):
-            language = st.selectbox("语言", languages)
-            code = st.text_area(
-                "代码",
-                height=320,
-                placeholder=REQUIRED_PLACEHOLDER,
-                help="请按照题目的输入输出要求编写完整代码。",
+        with section_card("代码与运行环境", key=f"submit_{problem['id']}", icon="💻"):
+            render_code_submission(
+                api, str(problem["id"]), languages, key=f"submit_{problem['id']}",
             )
-            submitted = st.form_submit_button("提交评测", type="primary")
-        if submitted:
-            if not code.strip():
-                st.error("请输入代码。")
-            else:
-                try:
-                    result = api.post(
-                        "/submissions/",
-                        json={
-                            "problem_id": problem["id"],
-                            "language": language,
-                            "code": code,
-                        },
-                    )["data"]
-                except Exception as exc:
-                    show_error(exc)
-                else:
-                    st.session_state["problem_submission_selected"] = result[
-                        "submission_id"
-                    ]
-                    st.session_state["submission_polling"] = True
-                    st.success(f"提交成功，编号：{result['submission_id']}")
-                    render_status(result["status"])
 
     section_header("我的递交历史", icon="📜")
     try:
@@ -203,40 +185,30 @@ def _render_problem_submission_tools(
         show_error(exc)
         return
     submissions = history.get("submissions", [])
+    list_count(int(history.get("total", len(submissions))))
     if submissions:
         render_submission_table(
             submissions,
             key=f"problem_{problem['id']}",
-            on_select=lambda submission_id: st.session_state.update(
-                problem_submission_selected=submission_id,
-                submission_polling=False,
-            ),
+            on_select=open_submission,
         )
     else:
         empty_state("你还没有提交过这道题。", icon="📭")
-    selected = st.session_state.get("problem_submission_selected")
-    if selected:
-        from frontend.pages.submissions import render_submission_detail
-
-        render_submission_detail(
-            api,
-            str(selected),
-            str(user.get("role")) == "admin",
-            show_heading=True,
-        )
 
 
 def render_problem_detail(
     api: ApiClient,
     problem_id: str,
     user: dict[str, Any],
+    *, back_label: str = "← 返回题目列表",
 ) -> None:
     with st.spinner("正在加载题目详情..."):
         problem = _load_problem(api, problem_id)
     if problem is None:
+        st.button(back_label, on_click=_close_problem)
         return
     role = str(user.get("role") or "")
-    detail_action = st.session_state.get("problem_detail_action")
+    detail_action = st.query_params.get("action", "")
     if detail_action in {"提交", "编辑", "删除"}:
         st.button(
             "← 返回题目详情",
@@ -294,7 +266,7 @@ def render_problem_detail(
                     st.rerun()
             return
 
-    st.button("← 返回题目列表", on_click=_close_problem)
+    st.button(back_label, on_click=_close_problem)
     subtitle = " · ".join(
         value
         for value in (problem.get("source"), problem.get("author"))
@@ -326,6 +298,9 @@ def render_problem_detail(
                 on_click=_select_detail_action,
                 args=("删除",),
             )
+        from frontend.components.bank_controls import render_add_to_bank
+
+        render_add_to_bank(api, str(problem["id"]))
 
     time_col, memory_col = st.columns(2)
     with time_col:
@@ -373,6 +348,9 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
         icon="📚",
         eyebrow="CHALLENGE LIBRARY",
     )
+    bank_notice = st.session_state.pop("bank_notice", None)
+    if bank_notice:
+        st.success(bank_notice)
     notice = st.session_state.pop("problem_notice", None)
     if notice:
         st.success(str(notice))
@@ -383,86 +361,125 @@ def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:
         show_error(exc)
         st.info("登录后查看题目列表。")
         return
-    if not problems:
-        empty_state("题库暂时为空，稍后再来挑战吧。", icon="📚")
-        return
-    section_header("筛选题目", icon="🔎")
-    def filters_changed() -> None:
-        reset_pagination("problem_list")
+    render_problem_catalogue(api, problems)
 
-    search_col, difficulty_col = st.columns([2, 1])
-    search = search_col.text_input(
-        "关键词",
-        placeholder="输入题号、名称、标签或来源",
-        key="problem_list_search",
-        on_change=filters_changed,
-    )
-    available_difficulties = {
-        str(item.get("difficulty")).strip()
-        for item in problems
-        if str(item.get("difficulty") or "").strip()
-    }
-    difficulties = [
-        *(
-            difficulty
-            for difficulty in DIFFICULTY_LEVELS
-            if difficulty in available_difficulties
-        ),
-        *sorted(available_difficulties - set(DIFFICULTY_LEVELS)),
-    ]
-    selected_difficulty = difficulty_col.selectbox(
-        "难度", ["全部难度", *difficulties],
-        key="problem_list_difficulty",
-        on_change=filters_changed,
-    )
+
+def render_problem_catalogue(
+    api: ApiClient, problems: list[dict[str, Any]], *,
+    key: str = "problem_list", selectable: bool = False,
+    on_remove: Callable[[str], None] | None = None,
+    show_count: bool = True,
+) -> list[str]:
+    from frontend.components.bank_controls import prepare_selection
+
+    if not problems:
+        if show_count:
+            list_count(0)
+        empty_state("暂无题目。", icon="📚")
+        return []
+
+    def filters_changed() -> None:
+        save_widgets(f"{key}_search", f"{key}_difficulty", reset_page=key)
+
+    restore_widget(f"{key}_search")
+
+    with section_card("筛选题目", key=f"{key}_filters", icon="🔎", tone="toolbar"):
+        search_col, difficulty_col = st.columns([2, 1])
+        search = search_col.text_input(
+            "关键词",
+            placeholder="输入题号、名称、标签或来源",
+            key=f"{key}_search",
+            on_change=filters_changed,
+        )
+        available_difficulties = {
+            str(item.get("difficulty")).strip()
+            for item in problems
+            if str(item.get("difficulty") or "").strip()
+        }
+        difficulties = [
+            *(
+                difficulty
+                for difficulty in DIFFICULTY_LEVELS
+                if difficulty in available_difficulties
+            ),
+            *sorted(available_difficulties - set(DIFFICULTY_LEVELS)),
+        ]
+        restore_widget(f"{key}_difficulty", "全部难度", options=["全部难度", *difficulties])
+        selected_difficulty = difficulty_col.selectbox(
+            "难度", ["全部难度", *difficulties],
+            key=f"{key}_difficulty",
+            on_change=filters_changed,
+        )
     filtered = filter_problem_summaries(
         problems,
         search,
         "" if selected_difficulty == "全部难度" else selected_difficulty,
     )
-    badges([(f"共 {len(filtered)} 道题", "cyan")])
+    if show_count:
+        list_count(len(filtered))
     if not filtered:
         empty_state("没有找到符合条件的题目，请调整筛选条件。", icon="🔍")
-        return
+        return []
 
-    page, page_size = pagination_values("problem_list")
+    page, page_size = pagination_values(key)
     start = (page - 1) * page_size
     visible = filtered[start : start + page_size]
-    with st.container(key="problem_catalog"):
-        header = st.columns(
-            [1, 2.8, 1.5, 1.5, 1.2], vertical_alignment="center"
-        )
-        header[0].markdown("**题号**")
-        header[1].markdown("**题目名称**")
-        header[2].markdown("**题型**")
-        header[3].markdown("**标签**")
-        header[4].markdown("**难度**")
+    selection_key = (
+        prepare_selection(key, (page, search, selected_difficulty), visible) if selectable else ""
+    )
+    labels = ("题号", "题目名称", "题型", "标签", "难度")
+    widths = (1, 2.8, 1.5, 1.5, 1.2)
+    if selectable:
+        labels = ("选择", *labels)
+        widths = (0.6, *widths)
+    if on_remove:
+        labels = (*labels, "操作")
+        widths = (*widths, 1)
+    with data_table(labels, widths, key=f"{key}_table"):
         for problem in visible:
-            row = st.columns(
-                [1, 2.8, 1.5, 1.5, 1.2], vertical_alignment="center"
-            )
-            row[0].write(problem["id"])
-            row[1].button(
-                str(problem["title"]),
-                key=f"open_problem_{problem['id']}",
-                on_click=_open_problem,
-                args=(str(problem["id"]),),
-                help=f"查看 {problem['title']} 的题目详情",
-            )
-            row[2].write(problem.get("problem_type") or "—")
-            first_tag = first_problem_tag(problem)
-            with row[3]:
-                if first_tag:
-                    badges([(first_tag, "cyan")])
-                else:
-                    st.write("—")
-            difficulty = str(problem.get("difficulty") or "").strip()
-            with row[4]:
-                if difficulty:
-                    badges([(difficulty, difficulty_tone(difficulty))])
-                else:
-                    st.write("—")
-    render_pagination("problem_list", total=len(filtered))
+            with table_row(labels, widths, key=f"{key}_row_{problem['id']}") as row:
+                if selectable:
+                    row[0].checkbox(
+                        f"选择 {problem['id']}", key=f"{selection_key}_item_{problem['id']}",
+                        label_visibility="collapsed",
+                    )
+                    row = row[1:]
+                with row[0]:
+                    cell_text(problem["id"], tone="muted")
+                row[1].button(
+                    str(problem["title"]),
+                    key=(f"open_problem_{problem['id']}" if key == "problem_list"
+                         else f"{key}_open_{problem['id']}"),
+                    on_click=_open_problem,
+                    args=(str(problem["id"]),),
+                    disabled=not problem.get("available", True),
+                    help=f"查看 {problem['title']} 的题目详情",
+                )
+                with row[2]:
+                    cell_text(problem.get("problem_type") or "—", tone="muted")
+                first_tag = first_problem_tag(problem)
+                with row[3]:
+                    if first_tag:
+                        badges([(first_tag, "cyan")])
+                    else:
+                        cell_text("—", tone="muted")
+                difficulty = str(problem.get("difficulty") or "").strip()
+                with row[4]:
+                    if difficulty:
+                        badges([(difficulty, difficulty_tone(difficulty))])
+                    else:
+                        cell_text("—", tone="muted")
+                if on_remove:
+                    with row[-1], st.popover("移出题库"):
+                        st.caption("仅移除收录关系，不删除原题。")
+                        if st.button("确认移出", key=f"{key}_remove_{problem['id']}"):
+                            on_remove(str(problem["id"]))
+    render_pagination(key, total=len(filtered))
+
+    return [
+        p["id"] for p in visible
+        if selectable and st.session_state.get(f"{selection_key}_item_{p['id']}")
+    ]
 
 
 def _pairs_editor(label: str, key: str, initial: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -531,57 +548,61 @@ def _catalogue_select(
 
 def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any] | None:
     data = initial or {}
-    problem_id = st.text_input(
-        "题目 ID",
-        data.get("id", ""),
-        disabled=initial is not None,
-        placeholder=REQUIRED_PLACEHOLDER,
-    )
-    title = st.text_input("标题", data.get("title", ""), placeholder=REQUIRED_PLACEHOLDER)
-    description = st.text_area(
-        "题面", data.get("description", ""), height=160, placeholder=REQUIRED_PLACEHOLDER
-    )
-    input_description = st.text_area(
-        "输入说明", data.get("input_description", ""), placeholder=REQUIRED_PLACEHOLDER
-    )
-    output_description = st.text_area(
-        "输出说明", data.get("output_description", ""), placeholder=REQUIRED_PLACEHOLDER
-    )
-    constraints = st.text_area(
-        "约束", data.get("constraints", ""), placeholder=REQUIRED_PLACEHOLDER
-    )
-    samples = _pairs_editor("样例", f"{prefix}_samples", data.get("samples", []))
-    testcases = _pairs_editor("测试点", f"{prefix}_tests", data.get("testcases", []))
-    hint = st.text_area("提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER)
-    source = st.text_input("来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER)
-    author = st.text_input("作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER)
-    difficulty_col, type_col = st.columns(2)
-    difficulty = _catalogue_select(
-        difficulty_col,
-        "难度",
-        data.get("difficulty", ""),
-        DIFFICULTY_LEVELS,
-        key=f"{prefix}_difficulty",
-    )
-    problem_type = _catalogue_select(
-        type_col,
-        "题型",
-        data.get("problem_type", ""),
-        PROBLEM_TYPES,
-        key=f"{prefix}_problem_type",
-    )
-    tags = st.text_input(
-        "标签",
-        ", ".join(data.get("tags", [])),
-        placeholder=OPTIONAL_PLACEHOLDER,
-        help="使用英文逗号分隔",
-    )
-    time_limit = st.number_input(
-        "时间限制（秒）", min_value=0.01, value=float(data.get("time_limit", 3.0))
-    )
-    memory_limit = st.number_input(
-        "内存限制（MB）", min_value=1, value=int(data.get("memory_limit", 128))
-    )
+    with section_card("基本信息", key=f"{prefix}_basic", icon="🪪"):
+        problem_id = st.text_input(
+            "题目 ID",
+            data.get("id", ""),
+            disabled=initial is not None,
+            placeholder=REQUIRED_PLACEHOLDER,
+        )
+        title = st.text_input("标题", data.get("title", ""), placeholder=REQUIRED_PLACEHOLDER)
+        source = st.text_input("来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER)
+        author = st.text_input("作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER)
+    with section_card("题面内容", key=f"{prefix}_statement", icon="📖"):
+        description = st.text_area(
+            "题面", data.get("description", ""), height=160, placeholder=REQUIRED_PLACEHOLDER
+        )
+        input_description = st.text_area(
+            "输入说明", data.get("input_description", ""), placeholder=REQUIRED_PLACEHOLDER
+        )
+        output_description = st.text_area(
+            "输出说明", data.get("output_description", ""), placeholder=REQUIRED_PLACEHOLDER
+        )
+        constraints = st.text_area(
+            "约束", data.get("constraints", ""), placeholder=REQUIRED_PLACEHOLDER
+        )
+        hint = st.text_area("提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER)
+    with section_card("样例与测试点", key=f"{prefix}_cases", icon="🧪"):
+        samples = _pairs_editor("样例", f"{prefix}_samples", data.get("samples", []))
+        testcases = _pairs_editor("测试点", f"{prefix}_tests", data.get("testcases", []))
+    with section_card("分类与资源限制", key=f"{prefix}_limits", icon="⚙️"):
+        difficulty_col, type_col = st.columns(2)
+        difficulty = _catalogue_select(
+            difficulty_col,
+            "难度",
+            data.get("difficulty", ""),
+            DIFFICULTY_LEVELS,
+            key=f"{prefix}_difficulty",
+        )
+        problem_type = _catalogue_select(
+            type_col,
+            "题型",
+            data.get("problem_type", ""),
+            PROBLEM_TYPES,
+            key=f"{prefix}_problem_type",
+        )
+        tags = st.text_input(
+            "标签",
+            ", ".join(data.get("tags", [])),
+            placeholder=OPTIONAL_PLACEHOLDER,
+            help="使用英文逗号分隔",
+        )
+        time_limit = st.number_input(
+            "时间限制（秒）", min_value=0.01, value=float(data.get("time_limit", 3.0))
+        )
+        memory_limit = st.number_input(
+            "内存限制（MB）", min_value=1, value=int(data.get("memory_limit", 128))
+        )
     if not st.button("保存题目", type="primary", key=f"{prefix}_save"):
         return None
     return build_problem_payload(
@@ -613,11 +634,13 @@ def render_problem_management(api: ApiClient) -> None:
         icon="✨",
         eyebrow="PROBLEM CREATION CENTER",
     )
+    restore_widget("problem_authoring_mode", "普通命题", options=["普通命题", "AI 智能命题"])
     authoring_mode = st.segmented_control(
         "命题方式",
         ["普通命题", "AI 智能命题"],
-        default="普通命题",
         key="problem_authoring_mode",
+        on_change=save_widgets,
+        args=("problem_authoring_mode",),
         label_visibility="collapsed",
     )
     if authoring_mode == "AI 智能命题":

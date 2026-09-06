@@ -1,18 +1,20 @@
 """Administrator audit-history page."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import show_error
+from frontend.components.layout import cell_text, data_table, section_card, table_row
 from frontend.components.pagination import (
     pagination_values,
     render_pagination,
-    reset_pagination,
 )
-from frontend.components.ui import badges, empty_state, page_header, section_header
+from frontend.components.ui import badges, empty_state, list_count, page_header, section_header
+from frontend.navigation import restore_widget, save_widgets
 
 AUDIT_ACTION_LABELS = {
     "view_logs": "查看测试点日志",
@@ -52,8 +54,59 @@ def audit_changes_text(changes: object) -> str:
     return json.dumps(changes, ensure_ascii=False, separators=(", ", ": "))
 
 
+CHANGE_LABELS = {
+    "before": "原值", "after": "新值", "role": "角色", "public_cases": "日志公开",
+    "model_name": "模型名称", "provider_url": "服务地址",
+    "agent_task_id": "命题任务", "revision": "版本", "status": "状态",
+}
+
+
+def audit_changes_summary(changes: object, action: str = "") -> str:
+    """Human-readable preview; the original JSON remains available in the row."""
+    if not isinstance(changes, dict) or not changes:
+        return "—"
+
+    def value_text(value: Any) -> str:
+        if value is None:
+            return "未设置"
+        if isinstance(value, bool):
+            return "是" if value else "否"
+        if action == "update_user_role" and isinstance(value, str):
+            return {"user": "普通用户", "admin": "管理员", "banned": "已禁用"}.get(value, value)
+        if isinstance(value, dict):
+            return "、".join(
+                f"{CHANGE_LABELS.get(str(key), str(key))}：{value_text(item)}"
+                for key, item in value.items()
+            ) or "空"
+        if isinstance(value, list):
+            return "、".join(value_text(item) for item in value) or "空"
+        return str(value)
+
+    parts = []
+    if "before" in changes and "after" in changes:
+        parts.append(f"{value_text(changes['before'])} → {value_text(changes['after'])}")
+    for key, value in changes.items():
+        if key in {"before", "after"} and "before" in changes and "after" in changes:
+            continue
+        label = CHANGE_LABELS.get(str(key), str(key))
+        if isinstance(value, dict) and "before" in value and "after" in value:
+            parts.append(f"{label}：{value_text(value['before'])} → {value_text(value['after'])}")
+        else:
+            parts.append(f"{label}：{value_text(value)}")
+    summary = "；".join(parts)
+    return summary if len(summary) <= 100 else summary[:99] + "…"
+
+
 def _audit_time_text(value: object) -> str:
-    return str(value or "—").replace("T", " ", 1)
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d\n%H:%M:%S")
+    except ValueError:
+        return str(value)
 
 
 def render_audit(api: ApiClient) -> None:
@@ -63,7 +116,6 @@ def render_audit(api: ApiClient) -> None:
         icon="🧾",
         eyebrow="ADMIN AUDIT",
     )
-    section_header("筛选条件", icon="🔎")
 
     try:
         user_result = api.get("/users/", params={"page": 1, "page_size": 1000})["data"]
@@ -88,27 +140,33 @@ def render_audit(api: ApiClient) -> None:
     }
 
     def filters_changed() -> None:
-        reset_pagination("audit_history")
+        save_widgets("audit_user_filter", "audit_action_filter", "audit_result_filter",
+                     reset_page="audit_history")
 
-    filters = st.columns(3)
-    selected_user = filters[0].selectbox(
-        "用户",
-        list(user_options),
-        key="audit_user_filter",
-        on_change=filters_changed,
-    )
-    selected_action = filters[1].selectbox(
-        "操作",
-        list(action_options),
-        key="audit_action_filter",
-        on_change=filters_changed,
-    )
-    selected_result = filters[2].selectbox(
-        "结果",
-        list(result_options),
-        key="audit_result_filter",
-        on_change=filters_changed,
-    )
+    restore_widget("audit_user_filter", "全部用户", options=user_options)
+    restore_widget("audit_action_filter", "全部操作", options=action_options)
+    restore_widget("audit_result_filter", "全部结果", options=result_options)
+
+    with section_card("筛选条件", key="audit_filters", icon="🔎", tone="toolbar"):
+        filters = st.columns(3)
+        selected_user = filters[0].selectbox(
+            "用户",
+            list(user_options),
+            key="audit_user_filter",
+            on_change=filters_changed,
+        )
+        selected_action = filters[1].selectbox(
+            "操作",
+            list(action_options),
+            key="audit_action_filter",
+            on_change=filters_changed,
+        )
+        selected_result = filters[2].selectbox(
+            "结果",
+            list(result_options),
+            key="audit_result_filter",
+            on_change=filters_changed,
+        )
 
     page, page_size = pagination_values("audit_history", default_page_size=20)
     params: dict[str, Any] = {"page": page, "page_size": page_size}
@@ -128,22 +186,31 @@ def render_audit(api: ApiClient) -> None:
     total = int(data.get("total", 0))
     logs = list(data.get("logs", []))
     section_header("审计记录", icon="🛡️")
-    badges([(f"共 {total} 条", "cyan"), (f"第 {page} 页", "orange")])
+    list_count(total)
     if not logs:
         empty_state("没有符合当前筛选条件的审计记录。", icon="🧾")
     else:
-        rows = [
-            {
-                "时间": _audit_time_text(item.get("created_at")),
-                "操作者": item.get("username")
-                or (f"用户 #{item['user_id']}" if item.get("user_id") else "已删除用户"),
-                "动作": audit_action_text(item.get("action")),
-                "目标": audit_target_text(item),
-                "结果": "成功" if item.get("success") else "失败",
-                "状态码": item.get("status"),
-                "变更摘要": audit_changes_text(item.get("changes")),
-            }
-            for item in logs
-        ]
-        st.dataframe(rows, hide_index=True, width="stretch")
-    render_pagination("audit_history", total=total)
+        labels = ("时间（北京时间）", "操作者", "动作", "目标", "结果", "状态码")
+        widths = (1.5, 1, 1.5, 2, .8, .7)
+        with data_table(labels, widths, key="audit"):
+            for index, item in enumerate(logs):
+                with table_row(labels, widths, key=f"audit_{page}_{index}") as row:
+                    with row[0]:
+                        cell_text(_audit_time_text(item.get("created_at")),
+                                  tone="timestamp", emphasis=True)
+                    with row[1]:
+                        cell_text(
+                            item.get("username") or (
+                                f"用户 #{item['user_id']}" if item.get("user_id") else "已删除用户"
+                            ),
+                            emphasis=True,
+                        )
+                    with row[2]:
+                        cell_text(audit_action_text(item.get("action")), emphasis=True)
+                    with row[3]:
+                        cell_text(audit_target_text(item), tone="muted")
+                    with row[4]:
+                        badges([("成功", "green") if item.get("success") else ("失败", "red")])
+                    with row[5]:
+                        cell_text(item.get("status"), tone="muted")
+    render_pagination("audit_history", total=total, page_size=page_size)

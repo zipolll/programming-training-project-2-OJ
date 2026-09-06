@@ -6,7 +6,8 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
-from frontend.components.ui import badges, page_header, section_header
+from frontend.components.layout import section_card
+from frontend.components.ui import badges, list_count, page_header
 from frontend.data_access import invalidate_language_cache, load_language_names
 
 LANGUAGE_LOADING_TEXT = "正在加载语言注册页面..."
@@ -36,30 +37,32 @@ def render_language_registration(api: ApiClient) -> None:
     except Exception as exc:
         show_error(exc)
         languages = []
+    list_count(len(languages))
     if languages:
         badges([(name, "cyan") for name in languages])
 
-    section_header("语言配置", icon="🧰")
     with st.form("language_registration_form"):
-        name = st.text_input("语言名称", placeholder="必填，如 java")
-        file_ext = st.text_input("源文件扩展名", placeholder="必填，如 .java")
-        compile_cmd = st.text_input(
-            "编译命令",
-            placeholder=OPTIONAL_PLACEHOLDER,
-            help="编译型语言需包含 {src} 和 {exe}；解释型语言可留空。",
-        )
-        run_cmd = st.text_input(
-            "运行命令",
-            placeholder=REQUIRED_PLACEHOLDER,
-            help="编译型语言使用 {exe}，解释型语言使用 {src}。",
-        )
-        limit_columns = st.columns(2)
-        time_limit = limit_columns[0].number_input(
-            "默认时间限制（秒）", min_value=0.01, max_value=60.0, value=1.0
-        )
-        memory_limit = limit_columns[1].number_input(
-            "默认内存限制（MB）", min_value=1, max_value=4096, value=128
-        )
+        with section_card("语言与执行命令", key="language_commands", icon="🧰"):
+            name = st.text_input("语言名称", placeholder="必填，如 java")
+            file_ext = st.text_input("源文件扩展名", placeholder="必填，如 .java")
+            compile_cmd = st.text_input(
+                "编译命令",
+                placeholder=OPTIONAL_PLACEHOLDER,
+                help="编译型语言需包含 {src} 和 {exe}；解释型语言可留空。",
+            )
+            run_cmd = st.text_input(
+                "运行命令",
+                placeholder=REQUIRED_PLACEHOLDER,
+                help="编译型语言使用 {exe}，解释型语言使用 {src}。",
+            )
+        with section_card("默认资源限制", key="language_limits", icon="⏱️"):
+            limit_columns = st.columns(2)
+            time_limit = limit_columns[0].number_input(
+                "默认时间限制（秒）", min_value=0.01, max_value=60.0, value=1.0
+            )
+            memory_limit = limit_columns[1].number_input(
+                "默认内存限制（MB）", min_value=1, max_value=4096, value=128
+            )
         submitted = st.form_submit_button("注册语言", type="primary")
     if not submitted:
         return

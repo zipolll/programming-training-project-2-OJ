@@ -8,10 +8,12 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
+from frontend.components.layout import section_card
 from frontend.components.ui import (
     badges,
     empty_state,
     info_card,
+    list_count,
     page_header,
     section_header,
     status_badge,
@@ -24,6 +26,7 @@ from frontend.models import (
     PROBLEM_TYPES,
     resolve_catalogue_option,
 )
+from frontend.navigation import restore_widget, save_widgets, update_route
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
@@ -109,7 +112,6 @@ def _task_overview(task: dict[str, Any]) -> None:
 
 
 def _config(api: ApiClient) -> None:
-    section_header("模型连接", icon="🔌")
     try:
         current = api.get("/agent/config")["data"]
     except Exception as exc:
@@ -128,51 +130,54 @@ def _config(api: ApiClient) -> None:
     ]
     badges(config_badges)
     with st.form("agent-config"):
-        provider_url = st.text_input(
-            "Provider URL",
-            current.get("provider_url", ""),
-            placeholder=REQUIRED_PLACEHOLDER,
-        )
-        model_name = st.text_input(
-            "模型名称", current.get("model_name", ""), placeholder=REQUIRED_PLACEHOLDER
-        )
-        api_key = st.text_input(
-            "API Key（留空则保留）", type="password", placeholder=OPTIONAL_PLACEHOLDER
-        )
-        section_header("Token 价格", icon="💳")
-        left, right = st.columns(2)
-        input_price = left.number_input(
-            "输入价格 / 百万 Token",
-            min_value=0.0,
-            value=float(current.get("input_price_per_million_tokens", 0)),
-        )
-        output_price = right.number_input(
-            "输出价格 / 百万 Token",
-            min_value=0.0,
-            value=float(current.get("output_price_per_million_tokens", 0)),
-        )
-        current_currency = str(current.get("currency", "USD"))
-        currency_options = list(COMMON_CURRENCIES)
-        if current_currency not in currency_options:
-            currency_options.append(current_currency)
-        currency = st.selectbox(
-            "币种",
-            currency_options,
-            index=currency_options.index(current_currency),
-            accept_new_options=True,
-            help="可从列表选择，也可以直接输入其他币种代码。",
-        )
-        section_header("执行策略", icon="⚙️")
-        timeout = st.number_input(
-            "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 360.0))
-        )
-        iterations = st.number_input("最大修正轮数", 1, 10, int(current.get("max_iterations", 3)))
-        max_tokens = st.number_input(
-            "单次最大输出 Token",
-            256,
-            128000,
-            int(current.get("max_output_tokens", 50000)),
-        )
+        with section_card("模型连接", key="agent_connection", icon="🔌"):
+            provider_url = st.text_input(
+                "Provider URL",
+                current.get("provider_url", ""),
+                placeholder=REQUIRED_PLACEHOLDER,
+            )
+            model_name = st.text_input(
+                "模型名称", current.get("model_name", ""), placeholder=REQUIRED_PLACEHOLDER
+            )
+            api_key = st.text_input(
+                "API Key（留空则保留）", type="password", placeholder=OPTIONAL_PLACEHOLDER
+            )
+        with section_card("Token 价格", key="agent_prices", icon="💳"):
+            left, right = st.columns(2)
+            input_price = left.number_input(
+                "输入价格 / 百万 Token",
+                min_value=0.0,
+                value=float(current.get("input_price_per_million_tokens", 0)),
+            )
+            output_price = right.number_input(
+                "输出价格 / 百万 Token",
+                min_value=0.0,
+                value=float(current.get("output_price_per_million_tokens", 0)),
+            )
+            current_currency = str(current.get("currency", "USD"))
+            currency_options = list(COMMON_CURRENCIES)
+            if current_currency not in currency_options:
+                currency_options.append(current_currency)
+            currency = st.selectbox(
+                "币种",
+                currency_options,
+                index=currency_options.index(current_currency),
+                accept_new_options=True,
+                help="可从列表选择，也可以直接输入其他币种代码。",
+            )
+        with section_card("执行策略", key="agent_policy", icon="⚙️"):
+            timeout = st.number_input(
+                "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 360.0))
+            )
+            iterations = st.number_input(
+                "最大修正轮数", 1, 10, int(current.get("max_iterations", 3))
+            )
+            max_tokens = st.number_input(
+                "单次最大输出 Token",
+                256,
+                128000,
+                int(current.get("max_output_tokens", 50000)),
+            )
         saved = st.form_submit_button("保存配置")
     if saved:
         config_errors = []
@@ -222,78 +227,70 @@ def _authoring_form(api: ApiClient) -> None:
     except Exception:
         problems = []
     with st.form("agent-authoring"):
-        section_header(
-            "命题方向",
-            "先确定题目考查内容，其余细节可以交给 AI 完成。",
-            icon="🎯",
-        )
-        knowledge = st.text_input(
-            "核心知识点",
-            placeholder=REQUIRED_PLACEHOLDER,
-            help="多个知识点使用逗号分隔；生成的解法必须使用这些知识点。",
-        )
-        difficulty_col, type_col = st.columns(2)
-        difficulty_choice = difficulty_col.selectbox(
-            "目标难度",
-            [*DIFFICULTY_LEVELS, OTHER_OPTION],
-        )
-        difficulty_other = ""
-        if difficulty_choice == OTHER_OPTION:
-            difficulty_other = difficulty_col.text_input(
-                "其它难度",
-                placeholder="请输入自定义难度",
+        with section_card("命题方向", key="agent_direction", icon="🎯"):
+            knowledge = st.text_input(
+                "核心知识点",
+                placeholder=REQUIRED_PLACEHOLDER,
+                help="多个知识点使用逗号分隔；生成的解法必须使用这些知识点。",
             )
-        problem_type_choice = type_col.selectbox(
-            "题目类型",
-            [*PROBLEM_TYPES, OTHER_OPTION],
-            index=1,
-            help="选择“其它”后可填写自定义题型。",
-        )
-        problem_type_other = ""
-        if problem_type_choice == OTHER_OPTION:
-            problem_type_other = type_col.text_input(
-                "其它题型",
-                placeholder="请输入自定义题型",
+            difficulty_col, type_col = st.columns(2)
+            difficulty_choice = difficulty_col.selectbox(
+                "目标难度",
+                [*DIFFICULTY_LEVELS, OTHER_OPTION],
             )
-        difficulty = resolve_catalogue_option(difficulty_choice, difficulty_other)
-        problem_type = resolve_catalogue_option(
-            problem_type_choice, problem_type_other
-        )
-        additional = st.text_area(
-            "补充要求", placeholder=OPTIONAL_PLACEHOLDER, height=100
-        )
+            difficulty_other = ""
+            if difficulty_choice == OTHER_OPTION:
+                difficulty_other = difficulty_col.text_input(
+                    "其它难度",
+                    placeholder="请输入自定义难度",
+                )
+            problem_type_choice = type_col.selectbox(
+                "题目类型",
+                [*PROBLEM_TYPES, OTHER_OPTION],
+                index=1,
+                help="选择“其它”后可填写自定义题型。",
+            )
+            problem_type_other = ""
+            if problem_type_choice == OTHER_OPTION:
+                problem_type_other = type_col.text_input(
+                    "其它题型",
+                    placeholder="请输入自定义题型",
+                )
+            difficulty = resolve_catalogue_option(difficulty_choice, difficulty_other)
+            problem_type = resolve_catalogue_option(
+                problem_type_choice, problem_type_other
+            )
+            additional = st.text_area(
+                "补充要求", placeholder=OPTIONAL_PLACEHOLDER, height=100
+            )
 
         with st.expander("高级设置（选填）"):
-            section_header(
-                "生成限制",
-                "留空时由 AI 根据知识点和难度自行决定。",
-                icon="🧠",
-            )
-            algorithm = st.text_input(
-                "期望算法或复杂度",
-                placeholder=OPTIONAL_PLACEHOLDER,
-                help="例如：双指针、O(n log n)。留空时由 AI 选择。",
-            )
-            forbidden = st.text_input(
-                "避免使用的知识点",
-                placeholder=OPTIONAL_PLACEHOLDER,
-                help="多个知识点使用逗号分隔；生成的解法不会采用这些内容。",
-            )
-            scale = st.text_input(
-                "数据规模",
-                placeholder=OPTIONAL_PLACEHOLDER,
-                help="例如：n ≤ 100000。留空时由 AI 结合资源限制确定。",
-            )
-            section_header("评测设置", icon="⏱️")
-            left, right = st.columns(2)
-            time_limit = left.number_input("时间限制（秒）", 0.1, 60.0, 2.0)
-            memory_limit = right.number_input("内存限制（MB）", 16, 4096, 128)
-            testcase_count = st.number_input("测试点数量", 1, 100, 10)
-            section_header("背景与改编", icon="🎨")
-            background = st.text_input("背景偏好", placeholder=OPTIONAL_PLACEHOLDER)
-            adapt = st.checkbox("基于已有题目改编")
-            options = [""] + [item["id"] for item in problems]
-            existing = st.selectbox("已有题目", options, disabled=not adapt)
+            with section_card("生成限制", key="agent_generation", icon="🧠"):
+                algorithm = st.text_input(
+                    "期望算法或复杂度",
+                    placeholder=OPTIONAL_PLACEHOLDER,
+                    help="例如：双指针、O(n log n)。留空时由 AI 选择。",
+                )
+                forbidden = st.text_input(
+                    "避免使用的知识点",
+                    placeholder=OPTIONAL_PLACEHOLDER,
+                    help="多个知识点使用逗号分隔；生成的解法不会采用这些内容。",
+                )
+                scale = st.text_input(
+                    "数据规模",
+                    placeholder=OPTIONAL_PLACEHOLDER,
+                    help="例如：n ≤ 100000。留空时由 AI 结合资源限制确定。",
+                )
+            with section_card("评测设置", key="agent_limits", icon="⏱️"):
+                left, right = st.columns(2)
+                time_limit = left.number_input("时间限制（秒）", 0.1, 60.0, 2.0)
+                memory_limit = right.number_input("内存限制（MB）", 16, 4096, 128)
+                testcase_count = st.number_input("测试点数量", 1, 100, 10)
+            with section_card("背景与改编", key="agent_background", icon="🎨"):
+                background = st.text_input("背景偏好", placeholder=OPTIONAL_PLACEHOLDER)
+                adapt = st.checkbox("基于已有题目改编")
+                options = [""] + [item["id"] for item in problems]
+                existing = st.selectbox("已有题目", options, disabled=not adapt)
         submitted = st.form_submit_button("创建命题任务")
     if submitted:
         form_errors = []
@@ -329,10 +326,11 @@ def _authoring_form(api: ApiClient) -> None:
         except Exception as exc:
             show_error(exc)
         else:
-            st.session_state.agent_task_id = result["task_id"]
+            update_route(agent_task_id=result["task_id"], agent_active_view="进度与结果")
             st.session_state.agent_events = []
             st.session_state.agent_after_id = 0
             st.success("任务已进入队列。")
+            st.rerun()
 
 
 def _result(api: ApiClient, task: dict[str, Any]) -> None:
@@ -398,7 +396,7 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
                 result = api.post(
                     f"/agent/tasks/{task['task_id']}/refine", json={"feedback": feedback}
                 )["data"]
-                st.session_state.agent_task_id = result["task_id"]
+                update_route(agent_task_id=result["task_id"])
                 st.session_state.agent_events = []
                 st.session_state.agent_after_id = 0
                 st.rerun()
@@ -425,6 +423,7 @@ def _task_monitor(api: ApiClient) -> None:
     except Exception as exc:
         show_error(exc)
         return
+    list_count(len(tasks))
     if not tasks:
         empty_state("尚无命题任务，请先在“创建任务”中发起挑战。", icon="🤖")
         return
@@ -432,12 +431,15 @@ def _task_monitor(api: ApiClient) -> None:
         item["task_id"]: (f"revision {item['revision']} · {item['status']} · {item['task_id'][:8]}")
         for item in tasks
     }
-    active_id = st.session_state.get("agent_task_id")
-    active_index = next((i for i, item in enumerate(tasks) if item["task_id"] == active_id), 0)
+    restore_widget("agent_task_id", tasks[0]["task_id"], options=labels)
     selected = st.selectbox(
-        "版本历史", list(labels), format_func=labels.get, index=max(0, active_index)
+        "版本历史", list(labels), format_func=labels.get, key="agent_task_id",
+        on_change=save_widgets, args=("agent_task_id",),
     )
-    st.session_state.agent_task_id = selected
+    if st.session_state.get("agent_events_task") != selected:
+        st.session_state.agent_events_task = selected
+        st.session_state.agent_events = []
+        st.session_state.agent_after_id = 0
     selected_status = next(item["status"] for item in tasks if item["task_id"] == selected)
     pause_key = f"agent-poll-paused-{selected}"
     if st.session_state.get(pause_key):
@@ -482,6 +484,8 @@ def _task_monitor(api: ApiClient) -> None:
                 api.post(f"/agent/tasks/{selected}/cancel")
             except Exception as exc:
                 show_error(exc)
+        section_header("任务事件", icon="📜")
+        list_count(len(merged))
         for event in merged[-30:]:
             timeline_event(event["timestamp"], event["stage"], event["message"])
         if task["status"] in TERMINAL:
@@ -504,17 +508,16 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
             eyebrow="AI PROBLEM ARENA",
             variant="ai",
         )
+    restore_widget("agent_active_view", "模型配置", options=["模型配置", "创建任务", "进度与结果"])
     selected_view = st.segmented_control(
         "功能",
         ["模型配置", "创建任务", "进度与结果"],
-        default="模型配置",
         label_visibility="collapsed",
         key="agent_active_view",
+        on_change=save_widgets, args=("agent_active_view",),
     )
     view = selected_view or "模型配置"
-    content = st.empty()
-    content.empty()
-    with content.container(), st.spinner(VIEW_LOADING_TEXT[view]):
+    with st.container(key="agent_view_content"), st.spinner(VIEW_LOADING_TEXT[view]):
         if view == "模型配置":
             _config(api)
         elif view == "创建任务":

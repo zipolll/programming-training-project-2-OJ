@@ -5,6 +5,7 @@ from typing import Any
 import streamlit as st
 
 from frontend.api_client import ApiClient
+from frontend.session_cache import cached_for_session, clear_session_cache
 
 REFERENCE_TTL_SECONDS = 15
 
@@ -48,8 +49,21 @@ def load_submission_options(api: ApiClient) -> tuple[list[dict[str, Any]], list[
     )
 
 
+def load_problem_detail(api: ApiClient, problem_id: str) -> dict[str, Any]:
+    """Reuse the current problem across detail, submit and editor interactions.
+
+    Full problems may include private testcases, so keep them session-local.
+    """
+    return cached_for_session(
+        f"problem:{api.base_url}:{problem_id}",
+        lambda: api.get(f"/problems/{problem_id}")["data"],
+        ttl=REFERENCE_TTL_SECONDS,
+    )
+
+
 def invalidate_problem_cache() -> None:
     load_problem_summaries.clear()
+    clear_session_cache("problem:")
 
 
 def invalidate_language_cache() -> None:

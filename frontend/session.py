@@ -28,13 +28,21 @@ def _state(state: MutableMapping[str, Any] | None) -> MutableMapping[str, Any]:
 
 
 def clear_auth(state: MutableMapping[str, Any] | None = None) -> None:
-    _state(state)[AUTH_USER_KEY] = None
+    target = _state(state)
+    target[AUTH_USER_KEY] = None
+    for key in list(target):
+        if key.startswith("bank_"):
+            del target[key]
 
 
 def set_auth_user(
     user: dict[str, Any], state: MutableMapping[str, Any] | None = None
 ) -> None:
-    _state(state)[AUTH_USER_KEY] = dict(user)
+    target = _state(state)
+    previous = target.get(AUTH_USER_KEY)
+    if not isinstance(previous, dict) or previous.get("id") != user.get("id"):
+        clear_auth(target)
+    target[AUTH_USER_KEY] = dict(user)
 
 
 def current_user(state: MutableMapping[str, Any] | None = None) -> dict[str, Any] | None:
@@ -95,9 +103,14 @@ def get_api_client(state: MutableMapping[str, Any] | None = None) -> ApiClient:
         return existing
 
     def unauthorized() -> None:
+        was_authenticated = current_user(target) is not None
         clear_auth(target)
         clear_session_cache(state=target)
-        request_browser_bridge_clear(target)
+        # A rejected password on the anonymous login form has no identity to
+        # revoke. Mounting a browser clear here can rerun the page in the
+        # middle of the user's next login attempt.
+        if was_authenticated:
+            request_browser_bridge_clear(target)
 
     client = ApiClient(on_unauthorized=unauthorized)
     target[API_CLIENT_KEY] = client

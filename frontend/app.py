@@ -9,6 +9,7 @@ from frontend.components.theme import apply_theme
 from frontend.components.ui import badges, feature_grid, page_header, section_header
 from frontend.data_access import load_service_status
 from frontend.models import NAVIGATION_METADATA, navigation_sections
+from frontend.navigation import mount_navigation
 from frontend.pages.audit import render_audit
 from frontend.pages.auth import (
     render_login,
@@ -18,10 +19,10 @@ from frontend.pages.auth import (
     render_user_admin,
 )
 from frontend.pages.languages import render_language_registration
+from frontend.pages.problem_banks import render_problem_banks
 from frontend.pages.problems import render_problem_list, render_problem_management
 from frontend.pages.submissions import (
     render_submission_list,
-    render_visibility,
 )
 from frontend.session import (
     auth_resolution_pending,
@@ -141,6 +142,7 @@ def main() -> None:
         renderers.update(
             {
                 "题目列表": _page(lambda: render_problem_list(api, user), "题目列表"),
+                "我的题库": _page(lambda: render_problem_banks(api, user), "我的题库"),
                 "题目管理": problem_management_page,
                 "提交记录": _page(
                     lambda: render_submission_list(api, user, role == "admin"), "提交记录"
@@ -156,7 +158,6 @@ def main() -> None:
             renderers.update(
                 {
                     "用户管理": _page(lambda: render_user_admin(api), "用户管理"),
-                    "日志可见性": _page(lambda: render_visibility(api), "日志可见性"),
                     "访问审计": _page(lambda: render_audit(api), "访问审计"),
                 }
             )
@@ -167,9 +168,14 @@ def main() -> None:
     }
     selected_page = st.navigation(sections, position="sidebar", expanded=True)
     if user:
+        st.session_state["oj_submission_page"] = renderers["提交记录"]
+        st.session_state["oj_bank_page"] = renderers["我的题库"]
+        st.session_state["oj_problems_page"] = renderers["题目列表"]
+    if user:
         st.sidebar.caption(f"当前用户：{user['username']}（{role}）")
     else:
         st.sidebar.caption("当前状态：未登录")
+    mount_navigation()
     selected_page.run()
 
 
