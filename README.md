@@ -55,7 +55,6 @@ API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <
 | 删除题目、重新评测 | 401 | 403 | 允许 | 不允许 |
 | Submission 详情 | 401 | 仅本人 | 任意提交 | 不允许 |
 | 私有评测日志 | 401 | 仅本人 | 任意日志 | 不允许 |
-| 公开评测日志 | 401 | 任意已登录用户 | 任意日志 | 不允许 |
 
 用户变为 `banned` 时，其全部数据库 Session 会立即删除，之后登录返回 403。系统禁止将最后一个有效管理员降级或封禁，避免不可恢复的权限状态。`submit_count` 直接统计该用户持久化 Submission 总数；`resolve_count` 只统计 `status=success` 且最终结果为 `AC` 的不同 `problem_id`，因此同题多次 AC 只算一次，WA、pending 和 error 均不计入。
 
@@ -73,6 +72,46 @@ API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <
 - `POST /api/languages/`：登录用户注册语言；请求字段严格遵循课程 API 的 `name`、`file_ext`、`compile_cmd`、`run_cmd`、`time_limit` 和 `memory_limit`。
 
 命令模板仅允许 `{src}`、`{exe}` 占位符。系统会用 `shlex` 将 API 中的字符串模板转换为参数数组，拒绝管道、重定向、命令连接符、变量展开和未知占位符；执行始终使用 `asyncio.create_subprocess_exec`，不会启用 shell。语言配置持久化在公共异步 SQLite 数据层中，名称全局唯一。
+
+## 个人题库
+
+登录后可从“题目 → 我的题库”创建多个私有题库，并修改名称、描述或删除题库。
+名称去除首尾空白后为 1–40 字符，同一用户不可重名；描述可空，最多 200 字符。
+题库按创建时间倒序显示，题目按题号排序，支持关键词搜索、难度筛选、分页及点击题目
+进入已有详情和提交页面；从详情可返回原题库。
+
+普通题目列表和题库主页仅供浏览。点击题库名称进入主页，描述单独显示在“题库描述”
+面板中，底部提供编辑和删除入口。“我的题库”列表底部的“创建题库”进入独立创建页；
+创建和编辑页的“＋ 增加题目”进入独立筛选选题页，支持单选、批量选择和全选当前页。
+翻页、改变筛选或切换题库会清空选择。创建时的名称、描述和已选题目在页面往返时保留，
+保存时题库和初始题目在同一事务内创建。编辑页增加、移出和移动题目即时生效，
+名称和描述通过“保存名称与描述”保存。删除题库和移出题目均需确认，不删除原题。
+所有列表上方统一用“共 N 条”胶囊展示总数，页码仅出现在分页器中。
+
+同题可收录到多个题库，同库重复添加不会产生重复记录。移动以 SQLite 事务完成；
+目标题库已有该题时保留一份，任意题目校验失败则整批不执行。题库保存题号引用，
+展示原题最新信息；原题删除后保留“题目已删除”条目并计入数量，可移出但不可打开或移动。
+
+以下接口均要求登录，沿用 `{code, msg, data}` 响应。用户身份来自 Session，管理员
+也仅能访问自己的题库，访问他人题库返回 404。题库数据不会进入跨用户共享缓存。
+
+| 接口 | 请求与结果 |
+| --- | --- |
+| `GET /api/problem-banks/` | 本人题库列表，含 `problem_count` |
+| `POST /api/problem-banks/` | `name`、可选 `description` 和 `problem_ids`；原子创建并返回 `id` |
+| `GET /api/problem-banks/{id}` | 题库信息、数量及 `problems` 摘要，含 `available` 标记 |
+| `PUT /api/problem-banks/{id}` | `name`、可选 `description`，完整替换题库元信息 |
+| `DELETE /api/problem-banks/{id}` | 删除题库及收录关系 |
+| `POST /api/problem-banks/{id}/problems` | `problem_ids` 非空数组，批量添加 |
+| `POST /api/problem-banks/{id}/problems/remove` | `problem_ids`，批量移出，不存在的关系按成功处理 |
+| `POST /api/problem-banks/{id}/problems/move` | `problem_ids`、`target_bank_id`，批量移动 |
+
+数据库启动时幂等创建 `problem_banks` 和 `problem_bank_items` 及索引，无需手动迁移，
+已有用户、题目和提交数据保持不变。题库功能测试：
+
+```bash
+python -m pytest tests/test_problem_banks.py tests/test_problem_banks_ui.py
+```
 
 ## 评测引擎
 
@@ -112,11 +151,11 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 
 ## 评测日志与访问审计
 
-`GET /api/submissions/{submission_id}/log` 返回当前评测版本的逐测试点 `details`、得分和总分。Submission 详情表示一次任务的总体状态；Evaluation Log 表示该任务当前版本的测试点明细，两者不会混在同一响应中。管理员可通过 `PUT /api/problems/{problem_id}/log_visibility` 持久化设置题目 `public_cases`：默认私有；公开后所有已登录用户可查看该题提交的日志，但仍不能借此读取他人的 Submission 总体结果。
+`GET /api/submissions/{submission_id}/log` 返回当前评测版本的逐测试点 `details`、得分和总分。Submission 详情表示一次任务的总体状态；Evaluation Log 表示该任务当前版本的测试点明细，两者不会混在同一响应中。测试点日志仅允许提交者本人或管理员查看。
 
-独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、日志可见性变更、角色/封禁变更、管理员重评、题目删除、AI 配置修改和 AI 题目导入。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录，也可通过分页接口 `GET /api/logs/audit/` 按用户、动作和成功状态查询全部已记录事件。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
+独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、角色/封禁变更、管理员重评、题目删除、AI 配置修改和 AI 题目导入。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录，也可通过分页接口 `GET /api/logs/audit/` 按用户、动作和成功状态查询全部已记录事件。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
 
-数据库初始化会幂等创建 `problem_log_visibility` 和 `audit_logs` 及索引。旧题目没有可见性记录时按私有处理；重复初始化不会删除或重写已有用户、题目、Submission 或测试点结果。
+数据库初始化会幂等创建 `audit_logs` 及索引；重复初始化不会删除或重写已有用户、题目、Submission 或测试点结果。旧数据库中的 `problem_log_visibility` 表可能继续保留以避免破坏历史数据，但应用不再读取或写入该表。
 
 ## 题目存储
 
@@ -154,10 +193,16 @@ python -m streamlit run frontend/app.py
 
 本地运行时请让前端地址和 API 地址使用相同主机名（例如都使用 `localhost`），
 以便浏览器按 `SameSite=Strict` 规则发送恢复 Cookie。
+服务端 API 客户端对 `localhost` 使用 IPv4 连接，保留原始 Host 和 Cookie 域，
+避免 Windows 在首次请求或连接空闲后先尝试 IPv6 而多等约两秒。本地回环请求
+不经过系统代理；远程 API 地址仍使用原有连接配置。
+更新客户端代码后，需要重启前端或刷新浏览器以创建新的会话客户端。
+题目详情在当前会话内缓存 15 秒，保存、删除或导入题目时主动失效；
+在详情、编辑和提交之间切换可复用数据，完整测试点不会进入跨用户共享缓存。
 
 页面包括注册、登录/退出、个人信息、管理员用户管理、题目列表与详情、完整题目
-新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、日志
-可见性管理、管理员访问审计，以及登录用户可用的 AI Agent 智能命题工作台。
+新增/编辑/删除、代码提交、提交记录与详情、测试点日志、管理员重新评测、管理员
+访问审计，以及登录用户可用的 AI Agent 智能命题工作台。
 
 所有业务数据均通过 FastAPI 接口读取和修改。登录后的 API Session Cookie 只在
 Streamlit 服务端内存客户端中使用；浏览器另持有 FastAPI 设置的 `HttpOnly`、
@@ -179,7 +224,7 @@ Submission 详情在 `pending` 时使用 Streamlit fragment 每秒查询一次�
 
 本地联调顺序：先启动 FastAPI，再启动 Streamlit；注册并登录普通用户，查看题目
 并提交 Python/C++ 代码；随后使用初始管理员登录，检查用户分页、完整题目管理、
-重评和日志可见性；最后退出并确认保护页面从导航消失。运行产生的数据库、题目、
+重评和访问审计；最后退出并确认保护页面从导航消失。运行产生的数据库、题目、
 评测代码和日志位于 Git 忽略的运行目录，联调后应再次执行 `git status` 检查。
 
 ## AI Agent 智能命题（Advance R1–R4）
@@ -283,6 +328,23 @@ python -m pytest tests/test_submissions.py
 ```
 
 在 Windows 原生环境中测试会验证安全降级路径；提交前还应在 Linux/WSL 中运行完整测试，以覆盖 `setrlimit` 与进程组终止逻辑。测试使用临时 SQLite 数据库和临时题目目录，不会污染开发数据。
+
+## 前端编辑器与页面恢复
+
+- 代码提交使用本地打包的 CodeMirror，支持 Python／C++ 高亮和自动增高。
+  已包含 `frontend/components/editor/editor.bundle.js`，运行网站不需要 Node 或外部 CDN。
+- 修改编辑器源代码后，在 `frontend/components/editor` 运行 `pnpm install --frozen-lockfile`
+  和 `pnpm build`，同时提交源文件、锁文件及打包文件。
+- 页面、筛选、页码与 AI 视图通过 URL 恢复；代码草稿仅保存在当前标签页，按用户、题目、
+  语言隔离，退出登录清理。普通命题和题库编辑的未保存表单不保证刷新后恢复。
+- 评测详情仅向提交本人和管理员展示语言与原始代码；编译失败的每个测试点显示 CE，
+  运行时间／内存显示“—”。审计时间统一为北京时间。
+- 本地界面回归使用 `tests/fixtures/card_pages.py`（端口 8517）与
+  `tests/fixtures/navigation_pages.py`（端口 8518）；对应的 `verify_experience.py`、
+  `verify_navigation.py`、`verify_theme.py` 需要测试环境安装 Playwright 和 Chrome。
+  这些预览使用模拟数据，不连接真实账号或业务数据库。
+
+本次功能的检查结果与环境限制见 [验证记录](docs/verification-2026-09-06.md)。
 
 ## 提交规范
 
