@@ -7,6 +7,23 @@ from pathlib import Path
 import aiosqlite
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS problem_banks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 40),
+    description TEXT NOT NULL DEFAULT '' CHECK(length(description) <= 200),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_problem_banks_owner_created
+ON problem_banks(user_id, created_at DESC, id DESC);
+CREATE TABLE IF NOT EXISTS problem_bank_items (
+    bank_id INTEGER NOT NULL REFERENCES problem_banks(id) ON DELETE CASCADE,
+    problem_id TEXT NOT NULL,
+    PRIMARY KEY (bank_id, problem_id)
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
@@ -95,12 +112,6 @@ CREATE TABLE IF NOT EXISTS submission_testcases (
     memory REAL NOT NULL,
     error_summary TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (submission_id, evaluation_version, testcase_id)
-);
-
-CREATE TABLE IF NOT EXISTS problem_log_visibility (
-    problem_id TEXT PRIMARY KEY,
-    public_cases INTEGER NOT NULL DEFAULT 0 CHECK (public_cases IN (0, 1)),
-    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (

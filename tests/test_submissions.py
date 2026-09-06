@@ -132,6 +132,9 @@ def test_submit_returns_pending_then_worker_succeeds_and_persists_details(
     detail = wait_for_status(client, submission_id, "success")
     assert detail == {
         "submission_id": submission_id,
+        "language": "python",
+        "code": "print(1)",
+        "result": "AC",
         "status": "success",
         "score": 20,
         "counts": 20,
@@ -145,7 +148,9 @@ def test_submit_returns_pending_then_worker_succeeds_and_persists_details(
         ).fetchall()
     assert rows == [(1, "AC", 0.01, 2.0), (2, "AC", 0.01, 2.0)]
     assert "details" not in detail
-    assert "code" not in detail
+    assert detail["code"] == "print(1)"
+    listing = client.get("/api/submissions/?problem_id=P1001").json()["data"]
+    assert all("code" not in item for item in listing["submissions"])
 
 
 @pytest.mark.parametrize(

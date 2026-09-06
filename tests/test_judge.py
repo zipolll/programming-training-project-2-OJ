@@ -104,6 +104,37 @@ def test_python_ac_multiple_cases_and_full_score(
     assert_clean(root)
 
 
+@pytest.mark.skipif(shutil.which("g++") is None, reason="g++ is not installed")
+def test_cpp_compile_failure_persists_every_case_and_preserves_source(judge_context):
+    client, application, _ = judge_context
+    cases = [{"input": str(i), "output": str(i)} for i in range(3)]
+    add_problem(client, "compile_failure_logs", cases)
+    code = "int main( {"
+    submitted = client.post("/api/submissions/", json={
+        "problem_id": "compile_failure_logs", "language": "cpp", "code": code,
+    }).json()["data"]
+    sid = submitted["submission_id"]
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        detail = client.get(f"/api/submissions/{sid}").json()["data"]
+        if detail["status"] != "pending":
+            break
+        time.sleep(.05)
+    assert detail["status"] == "success"
+    assert (detail["result"], detail["language"], detail["code"]) == ("CE", "cpp", code)
+    assert detail["score"] == 0
+    logs = client.get(f"/api/submissions/{sid}/log").json()["data"]["details"]
+    assert len(logs) == 3
+    assert all(row["result"] == "CE" and row["time"] == row["memory"] == 0 for row in logs)
+    assert all(row["error_summary"] == "编译失败，未运行" for row in logs)
+    import sqlite3
+
+    with sqlite3.connect(application.state.settings.database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM submission_testcases WHERE submission_id = ?", (sid,)
+        ).fetchone()[0] == 3
+
+
 def test_python_wa_and_partial_score(
     judge_context: tuple[TestClient, FastAPI, Path],
 ) -> None:
@@ -365,6 +396,8 @@ def test_cpp_result_states(
         assert result.score == 20
     if expected is Status.CE:
         assert result.score == 0
-        assert result.testcase_results == []
+        assert len(result.testcase_results) == 2
+        assert all(item.result is Status.CE for item in result.testcase_results)
+        assert all(item.time == 0 and item.memory == 0 for item in result.testcase_results)
         assert result.compile_info not in (None, "success")
     assert_clean(root)

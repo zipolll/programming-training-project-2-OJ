@@ -141,6 +141,9 @@ def submission_detail(submission: Submission) -> dict[str, object]:
     data: dict[str, object] = {
         "submission_id": str(submission.submission_id),
         "status": submission.status.value,
+        "language": submission.language,
+        "code": submission.code,
+        "result": submission.result.value if submission.result is not None else None,
     }
     if submission.status is SubmissionStatus.PENDING:
         return data

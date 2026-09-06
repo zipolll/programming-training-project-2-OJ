@@ -7,20 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from backend.app.core.responses import ApiResponse
 from backend.app.modules.logs.audit_models import AuditLog
 from backend.app.modules.logs.audit_service import AuditService
-from backend.app.modules.logs.models import LogVisibilityRequest
 from backend.app.modules.logs.service import (
     EvaluationLogNotFoundError,
     EvaluationLogPermissionError,
     EvaluationLogService,
     evaluation_log_data,
 )
-from backend.app.modules.problems.service import ProblemNotFoundError
 from backend.app.modules.users.dependencies import require_admin, require_login
 from backend.app.modules.users.models import User
 
 router = APIRouter()
 submission_log_router = APIRouter()
-problem_log_router = APIRouter()
 
 
 def _audit_log_data(entry: AuditLog) -> dict[str, object]:
@@ -60,25 +57,6 @@ async def get_evaluation_log(
     except EvaluationLogPermissionError as exc:
         raise HTTPException(status_code=403, detail="Permission denied") from exc
     return ApiResponse(data=evaluation_log_data(submission, entries))
-
-
-@problem_log_router.put("/{problem_id}/log_visibility", response_model=ApiResponse)
-async def update_log_visibility(
-    problem_id: str,
-    payload: LogVisibilityRequest,
-    current_user: Annotated[User, Depends(require_admin)],
-    service: Annotated[EvaluationLogService, Depends(get_log_service)],
-) -> ApiResponse:
-    try:
-        await service.set_visibility(current_user, problem_id, payload.public_cases)
-    except (ProblemNotFoundError, ValueError) as exc:
-        status = 400 if isinstance(exc, ValueError) else 404
-        message = "invalid problem id" if status == 400 else "problem not found"
-        raise HTTPException(status_code=status, detail=message) from exc
-    return ApiResponse(
-        msg="log visibility updated",
-        data={"problem_id": problem_id, "public_cases": payload.public_cases},
-    )
 
 
 @router.get("/access/", response_model=ApiResponse)

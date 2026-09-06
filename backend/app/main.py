@@ -22,6 +22,8 @@ from backend.app.modules.logs.audit_repository import AuditRepository
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.logs.repository import EvaluationLogRepository
 from backend.app.modules.logs.service import EvaluationLogService
+from backend.app.modules.problem_banks.repository import BankRepository
+from backend.app.modules.problem_banks.service import BankService
 from backend.app.modules.problems.repository import ProblemRepository
 from backend.app.modules.problems.service import ProblemService
 from backend.app.modules.submissions.repository import SubmissionRepository
@@ -48,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.database = database
         application.state.auth_service = auth_service
         application.state.problem_service = problem_service
+        application.state.bank_service = BankService(BankRepository(database), problem_service)
         application.state.language_service = language_service
         application.state.judge_service = JudgeService(
             problem_service, language_service, resolved_settings
@@ -74,7 +77,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.evaluation_log_service = EvaluationLogService(
             EvaluationLogRepository(database),
             submission_repository,
-            problem_service,
             audit_service,
         )
         application.state.evaluation_task_manager = evaluation_manager

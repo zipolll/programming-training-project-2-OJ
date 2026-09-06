@@ -61,7 +61,7 @@ class JudgeService:
                     )
                     compile_info = self._compile_message(compiled, workspace)
                     if compiled.status is not None:
-                        return self._compile_failure(compiled, compile_info)
+                        return self._compile_failure(compiled, compile_info, len(problem.testcases))
 
                 results: list[TestcaseResult] = []
                 captured_stdout = ""
@@ -182,13 +182,22 @@ class JudgeService:
         return self._safe_summary(message, workspace, self.settings.judge_output_limit_bytes)
 
     @staticmethod
-    def _compile_failure(outcome: ProcessOutcome, compile_info: str) -> JudgeResult:
+    def _compile_failure(
+        outcome: ProcessOutcome, compile_info: str, testcase_count: int
+    ) -> JudgeResult:
         return JudgeResult(
             status=TestcaseStatus.CE,
             score=0,
             compile_info=compile_info,
             time=outcome.time,
             memory=outcome.memory,
+            testcase_results=[
+                TestcaseResult(
+                    id=index, result=TestcaseStatus.CE, time=0.0, memory=0.0,
+                    error_summary="编译失败，未运行",
+                )
+                for index in range(1, testcase_count + 1)
+            ],
         )
 
     def _result_summary(

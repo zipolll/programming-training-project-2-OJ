@@ -40,28 +40,3 @@ class EvaluationLogRepository:
             )
             for row in rows
         ]
-
-    async def is_public(self, problem_id: str) -> bool:
-        async with self.database.connect() as connection:
-            cursor = await connection.execute(
-                "SELECT public_cases FROM problem_log_visibility WHERE problem_id = ?",
-                (problem_id,),
-            )
-            row = await cursor.fetchone()
-        return bool(row[0]) if row else False
-
-    async def set_public(self, problem_id: str, public_cases: bool, now: datetime) -> bool:
-        previous = await self.is_public(problem_id)
-        async with self.database.connect() as connection:
-            await connection.execute(
-                """
-                INSERT INTO problem_log_visibility (problem_id, public_cases, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(problem_id) DO UPDATE SET
-                    public_cases = excluded.public_cases,
-                    updated_at = excluded.updated_at
-                """,
-                (problem_id, int(public_cases), now.isoformat()),
-            )
-            await connection.commit()
-        return previous

@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from backend.app.core.config import Settings
 from backend.app.core.database import Database
 from backend.app.main import create_app
-from backend.app.modules.logs.router import problem_log_router, router, submission_log_router
+from backend.app.modules.logs.router import router, submission_log_router
 from backend.app.modules.users.auth_router import router as auth_router
 from backend.app.modules.users.management_router import router as management_router
 
@@ -196,7 +196,7 @@ def test_role_changes_ban_sessions_and_preserve_last_admin(
     assert {"before": "banned", "after": "user"} in changes
 
 
-def test_log_visibility_access_clipping_and_access_audit(
+def test_log_access_clipping_and_access_audit(
     context: tuple[TestClient, FastAPI, Path],
 ) -> None:
     client, _, database_path = context
@@ -207,6 +207,18 @@ def test_log_visibility_access_clipping_and_access_audit(
         database_path, user_id=alice_id, result="RE", version=2
     )
     with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE problem_log_visibility (
+                problem_id TEXT PRIMARY KEY,
+                public_cases INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO problem_log_visibility VALUES ('P1', 1, '2026-09-04T00:00:00+00:00')"
+        )
         connection.execute(
             """
             INSERT INTO submission_testcases
@@ -243,10 +255,8 @@ def test_log_visibility_access_clipping_and_access_audit(
 
     _admin(client)
     assert client.get(f"/api/submissions/{submission_id}/log").status_code == 200
-    visible = client.put("/api/problems/P1/log_visibility", json={"public_cases": True})
-    assert visible.status_code == 200
     _login(client, "bobby")
-    assert client.get(f"/api/submissions/{submission_id}/log").status_code == 200
+    assert client.get(f"/api/submissions/{submission_id}/log").status_code == 403
     assert client.get(f"/api/submissions/{submission_id}").status_code == 403
     assert client.post("/api/auth/logout").status_code == 200
     assert client.get(f"/api/submissions/{submission_id}/log").status_code == 401
@@ -255,10 +265,6 @@ def test_log_visibility_access_clipping_and_access_audit(
     access = client.get("/api/logs/access/?problem_id=P1")
     assert access.status_code == 200
     assert {item["status"] for item in access.json()["data"]} >= {"200", "403"}
-    private = client.put("/api/problems/P1/log_visibility", json={"public_cases": False})
-    assert private.status_code == 200
-    _login(client, "bobby")
-    assert client.get(f"/api/submissions/{submission_id}/log").status_code == 403
 
 
 def test_privileged_actions_are_structurally_audited(
@@ -270,9 +276,6 @@ def test_privileged_actions_are_structurally_audited(
     assert client.post("/api/problems/", json=_problem()).status_code == 200
     submission_id = _insert_submission(database_path, user_id=alice_id)
     _admin(client)
-    assert client.put(
-        "/api/problems/P1/log_visibility", json={"public_cases": True}
-    ).status_code == 200
     assert client.put(f"/api/submissions/{submission_id}/rejudge").status_code == 200
     assert client.delete("/api/problems/P1").status_code == 200
     with sqlite3.connect(database_path) as connection:
@@ -280,7 +283,7 @@ def test_privileged_actions_are_structurally_audited(
             "SELECT action, changes FROM audit_logs ORDER BY id"
         ).fetchall()
     actions = {row[0] for row in rows}
-    assert {"update_log_visibility", "rejudge_submission", "delete_problem"} <= actions
+    assert {"rejudge_submission", "delete_problem"} <= actions
     serialized = " ".join(row[1] for row in rows).lower()
     assert all(secret not in serialized for secret in ("password", "session", "cookie", "print(3)"))
 
@@ -297,15 +300,13 @@ def test_admin_can_list_all_audit_events_with_filters_and_pagination(
 
     assert client.get("/api/logs/audit/").status_code == 403
     _admin(client)
-    assert client.put(
-        "/api/problems/P1/log_visibility", json={"public_cases": True}
-    ).status_code == 200
+    assert client.put(f"/api/submissions/{submission_id}/rejudge").status_code == 200
 
     first_page = client.get("/api/logs/audit/?page=1&page_size=1")
     assert first_page.status_code == 200
     assert first_page.json()["data"]["total"] == 2
     assert len(first_page.json()["data"]["logs"]) == 1
-    assert first_page.json()["data"]["logs"][0]["action"] == "update_log_visibility"
+    assert first_page.json()["data"]["logs"][0]["action"] == "rejudge_submission"
 
     views = client.get(
         f"/api/logs/audit/?user_id={alice_id}&action=view_logs&success=true"
@@ -357,8 +358,8 @@ def test_schema_upgrade_is_idempotent_and_preserves_users(tmp_path: Path) -> Non
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        assert {"problem_log_visibility", "audit_logs", "submission_testcases"} <= tables
-        assert connection.execute("SELECT COUNT(*) FROM problem_log_visibility").fetchone()[0] == 0
+        assert {"audit_logs", "submission_testcases"} <= tables
+        assert "problem_log_visibility" not in tables
 
 
 def test_new_route_handlers_are_async() -> None:
@@ -367,7 +368,6 @@ def test_new_route_handlers_are_async() -> None:
         *management_router.routes,
         *router.routes,
         *submission_log_router.routes,
-        *problem_log_router.routes,
     ]
     assert routes
     assert all(inspect.iscoroutinefunction(route.endpoint) for route in routes)
