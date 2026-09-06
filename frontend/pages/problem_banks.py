@@ -80,12 +80,19 @@ def render_add_problems(api, bank: dict | None) -> None:
     draft = get_draft(bank)
     existing = {p["id"] for p in bank["problems"]} if bank else set(draft["problem_ids"])
     try:
-        problems = [p for p in api.get("/problems/")["data"] if p["id"] not in existing]
+        available = api.get("/problems/")["data"]
+        problems = [p for p in available if p["id"] not in existing]
     except Exception as exc:
         show_error(exc)
         return
     key = f"bank_add_{bank_id or 'new'}"
-    selected = render_problem_catalogue(api, problems, key=key, selectable=True, show_count=False)
+    selected = render_problem_catalogue(
+        api, problems, key=key, selectable=True, show_count=False,
+        empty_message=(
+            "当前题目均已收录到此题库，无需重复添加。" if available
+            else "暂无可选题目，请先在命题中心创建题目。"
+        ),
+    )
     if st.button("确认增加", type="primary", disabled=not selected, key="bank_confirm_add"):
         try:
             if bank:

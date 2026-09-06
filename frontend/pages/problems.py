@@ -280,27 +280,16 @@ def render_problem_detail(
     )
     actions = problem_detail_actions(role)
     if actions:
-        action_columns = st.columns([1, 1, 1, 5])
-        action_columns[0].button(
-            "去提交",
-            type="primary",
-            on_click=_select_detail_action,
-            args=("提交",),
-        )
-        action_columns[1].button(
-            "编辑题目",
-            on_click=_select_detail_action,
-            args=("编辑",),
-        )
-        if "删除" in actions:
-            action_columns[2].button(
-                "删除题目",
-                on_click=_select_detail_action,
-                args=("删除",),
-            )
         from frontend.components.bank_controls import render_add_to_bank
 
-        render_add_to_bank(api, str(problem["id"]))
+        with st.container(horizontal=True, key="problem_detail_actions"):
+            st.button(
+                "去提交", type="primary", on_click=_select_detail_action, args=("提交",),
+            )
+            st.button("编辑题目", on_click=_select_detail_action, args=("编辑",))
+            if "删除" in actions:
+                st.button("删除题目", on_click=_select_detail_action, args=("删除",))
+            render_add_to_bank(api, str(problem["id"]))
 
     time_col, memory_col = st.columns(2)
     with time_col:
@@ -369,13 +358,14 @@ def render_problem_catalogue(
     key: str = "problem_list", selectable: bool = False,
     on_remove: Callable[[str], None] | None = None,
     show_count: bool = True,
+    empty_message: str = "暂无题目。",
 ) -> list[str]:
     from frontend.components.bank_controls import prepare_selection
 
-    if not problems:
+    if not problems and not selectable:
         if show_count:
             list_count(0)
-        empty_state("暂无题目。", icon="📚")
+        empty_state(empty_message, icon="📚")
         return []
 
     def filters_changed() -> None:
@@ -418,7 +408,10 @@ def render_problem_catalogue(
     if show_count:
         list_count(len(filtered))
     if not filtered:
-        empty_state("没有找到符合条件的题目，请调整筛选条件。", icon="🔍")
+        empty_state(
+            "没有找到符合条件的题目，请调整筛选条件。" if problems else empty_message,
+            icon="🔍" if problems else "📚",
+        )
         return []
 
     page, page_size = pagination_values(key)

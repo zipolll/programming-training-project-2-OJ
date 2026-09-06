@@ -197,6 +197,26 @@ def test_deleted_problem_is_read_only_and_can_be_removed_in_editor(ui):
     assert not app.exception
 
 
+def test_fully_collected_bank_keeps_add_filters_and_explains_empty_state(ui):
+    app, api = ui
+    bank = api.post(
+        "/problem-banks/",
+        json={"name": "全部题目", "problem_ids": [f"P{number:02}" for number in range(12)]},
+    )["data"]["id"]
+    app.run()
+    button(app, "全部题目").click().run()
+    button(app, "编辑题库").click().run()
+    button(app, "增加题目").click().run()
+    assert not app.exception
+    assert app.text_input(key=f"bank_add_{bank}_search")
+    assert app.selectbox(key=f"bank_add_{bank}_difficulty")
+    assert any("当前题目均已收录" in item.value for item in app.markdown)
+    assert button(app, "确认增加").disabled
+    button(app, "← 返回编辑题库").click().run()
+    assert not app.exception
+    assert api.get(f"/problem-banks/{bank}")["data"]["problem_count"] == 12
+
+
 def test_problem_detail_adds_to_owned_bank_without_leaving_or_duplicating(ui):
     app, api = ui
     bank = api.post("/problem-banks/", json={"name": "收藏"})["data"]["id"]

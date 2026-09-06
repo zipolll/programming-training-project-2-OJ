@@ -191,7 +191,7 @@ a.anchor-link {
 .oj-info-card__value { margin-top: .2rem; font-size: 1.08rem; font-weight: 800; }
 .oj-info-card--compact .oj-info-card__label,
 .oj-info-card--compact .oj-info-card__value { white-space: nowrap; }
-.oj-empty { padding: 2rem; text-align: center; color: var(--oj-muted); }
+.oj-empty { margin-bottom: 1rem; padding: 2rem; text-align: center; color: var(--oj-muted); }
 .oj-empty__icon { display: block; margin-bottom: .5rem; font-size: 2rem; }
 
 .oj-badges { display: flex; flex-wrap: wrap; gap: .45rem; margin: .55rem 0; }
@@ -240,7 +240,7 @@ a.anchor-link {
   gap: 0 !important;
   margin: 0;
   padding: .15rem 0 .9rem;
-  border-bottom: 1px solid var(--oj-line);
+  border-bottom: 0;
 }
 [class*="problem_metadata"] .oj-badges {
   gap: .5rem;
@@ -922,18 +922,20 @@ input::placeholder, textarea::placeholder { -webkit-text-fill-color: #8a95a8 !im
 .oj-badge--yellow { color: #854d0e; background: #fef9c3; border-color: #fde047; }
 .oj-badge--gray { color: #475569; background: #f1f5f9; border-color: #cbd5e1; }
 [class*="problem_authoring_mode"] [role="radiogroup"] button {
-  justify-content: center !important; font-size: 28px !important;
+  justify-content: center !important; font-size: 24px !important;
 }
 [class*="problem_authoring_mode"] [role="radiogroup"] button p {
-  font-size: 28px !important; font-weight: 750 !important; color: inherit !important;
+  font-size: 24px !important; font-weight: 750 !important; color: inherit !important;
   white-space: normal !important; overflow: visible !important; line-height: 1.3 !important;
 }
 [class*="problem_authoring_mode"] [role="radiogroup"] button :is(div, span) {
   white-space: normal !important; text-overflow: clip !important; overflow: visible !important;
 }
-[class*="problem_authoring_mode"] [role="radiogroup"] button::before { font-size: 34px; }
+[class*="problem_authoring_mode"] [role="radiogroup"] button::before { font-size: 30px; }
 [class*="problem_authoring_mode"] button[aria-checked="true"] :is(div, span, p),
-[data-testid="stBaseButton-primary"] :is(div, span, p) { color: #fff !important; }
+button:is([kind="primary"], [kind="primaryFormSubmit"],
+  [data-testid="stBaseButton-primary"],
+  [data-testid="stBaseButton-primaryFormSubmit"]) :is(div, span, p) { color: #fff !important; }
 [class*="st-key-bank_link_card_"] {
   background: #fff; border: 1px solid #dfe5f1; border-radius: 18px;
   padding: 20px 24px; box-shadow: var(--oj-shadow);
@@ -943,7 +945,7 @@ input::placeholder, textarea::placeholder { -webkit-text-fill-color: #8a95a8 !im
   box-shadow: none; border: 0; border-radius: 10px;
 }
 @media (max-width: 700px) {
-  [class*="problem_authoring_mode"] [role="radiogroup"] button p { font-size: 22px !important; }
+  [class*="problem_authoring_mode"] [role="radiogroup"] button p { font-size: 20px !important; }
   [class*="problem_authoring_mode"] [role="radiogroup"] button::before { font-size: 28px; }
   [class*="problem_authoring_mode"] [role="radiogroup"] button { padding: 12px 8px !important; }
   [class*="problem_authoring_mode"] [role="radiogroup"] button {

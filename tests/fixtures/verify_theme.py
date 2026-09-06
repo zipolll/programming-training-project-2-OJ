@@ -27,7 +27,7 @@ with sync_playwright() as pw:
     expect(page.get_by_text("普通命题", exact=True)).to_be_visible(timeout=15000)
     controls = page.locator('[class*="problem_authoring_mode"] [role="radiogroup"] button')
     assert controls.count() == 2
-    assert controls.first.locator("p").evaluate("e => getComputedStyle(e).fontSize") == "28px"
+    assert controls.first.locator("p").evaluate("e => getComputedStyle(e).fontSize") == "24px"
     selected_color = controls.first.locator("p").evaluate("e => getComputedStyle(e).color")
     assert selected_color == "rgb(255, 255, 255)"
     page.screenshot(path=str(out / "authoring-desktop.png"))
@@ -36,7 +36,7 @@ with sync_playwright() as pw:
         sidebar_close.click()
     page.set_viewport_size({"width": 390, "height": 900})
     page.wait_for_timeout(500)
-    assert controls.first.locator("p").evaluate("e => getComputedStyle(e).fontSize") == "22px"
+    assert controls.first.locator("p").evaluate("e => getComputedStyle(e).fontSize") == "20px"
     page.screenshot(path=str(out / "authoring-mobile.png"))
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     controls.filter(has_text="AI 智能命题").click()

@@ -178,7 +178,9 @@ def _config(api: ApiClient) -> None:
                 128000,
                 int(current.get("max_output_tokens", 50000)),
             )
-        saved = st.form_submit_button("保存配置")
+        with st.container(horizontal=True):
+            saved = st.form_submit_button("保存配置")
+            test_connection = st.form_submit_button("测试模型连接")
     if saved:
         config_errors = []
         if not provider_url.strip():
@@ -211,7 +213,7 @@ def _config(api: ApiClient) -> None:
             show_error(exc)
         else:
             st.success("配置已加密保存。")
-    if st.button("测试模型连接"):
+    if test_connection:
         try:
             api.post("/agent/config/test")
         except Exception as exc:
