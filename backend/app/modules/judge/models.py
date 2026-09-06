@@ -103,7 +103,7 @@ class LanguageRegistration(StrictModel):
     file_ext: str
     compile_cmd: str | None = Field(default=None, max_length=1024)
     run_cmd: str = Field(min_length=1, max_length=1024)
-    time_limit: float = Field(default=1.0, gt=0, le=60, allow_inf_nan=False)
+    time_limit: float = Field(default=3.0, gt=0, le=60, allow_inf_nan=False)
     memory_limit: int = Field(default=128, gt=0, le=4096)
 
     def to_config(self) -> LanguageConfig:

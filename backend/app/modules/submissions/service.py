@@ -1,5 +1,6 @@
 """Submission creation, visibility, presentation, and rejudge rules."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from backend.app.core.config import Settings
@@ -42,16 +43,24 @@ class SubmissionService:
         self.language_service = language_service
         self.task_manager = task_manager
         self.settings = settings
+        self._creation_lock = asyncio.Lock()
 
     async def create(self, user: User, request: SubmissionRequest) -> Submission:
-        problem = await self.problem_service.get_problem(request.problem_id)
-        await self.language_service.get_enabled(request.language)
+        async with self._creation_lock, self.problem_service.mutation_lock:
+            return await self._create(user, request)
+
+    async def _create(self, user: User, request: SubmissionRequest) -> Submission:
+        from backend.app.modules.problems.repository import validate_problem_id
+
+        validate_problem_id(request.problem_id)
         if len(request.code.encode("utf-8")) > self.settings.submission_code_limit:
             raise ValueError("code is too long")
         now = _utc_now()
         recent = await self.repository.count_recent(user.id, now - timedelta(minutes=1))
         if recent >= self.settings.submission_rate_limit_per_minute:
             raise SubmissionRateLimitError
+        problem = await self.problem_service.get_problem(request.problem_id)
+        await self.language_service.get_enabled(request.language)
         submission = await self.repository.create(
             user_id=user.id,
             problem_id=problem.id,
@@ -92,13 +101,13 @@ class SubmissionService:
         page: int | None,
         page_size: int | None,
     ) -> tuple[int, list[Submission]]:
+        if user.role is not UserRole.ADMIN and user_id is not None and user_id != user.id:
+            raise SubmissionPermissionError
         if user_id is None and problem_id is None:
             raise ValueError("user_id or problem_id is required")
         if page is not None and page_size is None:
             raise ValueError("page_size is required when page is provided")
         if user.role is not UserRole.ADMIN:
-            if user_id is not None and user_id != user.id:
-                raise SubmissionPermissionError
             user_id = user.id
         return await self.repository.list_filtered(
             user_id=user_id,

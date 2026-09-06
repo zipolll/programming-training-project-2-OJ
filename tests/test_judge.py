@@ -123,6 +123,8 @@ def test_cpp_compile_failure_persists_every_case_and_preserves_source(judge_cont
     assert detail["status"] == "success"
     assert (detail["result"], detail["language"], detail["code"]) == ("CE", "cpp", code)
     assert detail["score"] == 0
+    assert "details" not in client.get(f"/api/submissions/{sid}/log").json()["data"]
+    client.post("/api/auth/login", json={"username": "admin", "password": "admintestpassword"})
     logs = client.get(f"/api/submissions/{sid}/log").json()["data"]["details"]
     assert len(logs) == 3
     assert all(row["result"] == "CE" and row["time"] == row["memory"] == 0 for row in logs)
@@ -400,4 +402,21 @@ def test_cpp_result_states(
         assert all(item.result is Status.CE for item in result.testcase_results)
         assert all(item.time == 0 and item.memory == 0 for item in result.testcase_results)
         assert result.compile_info not in (None, "success")
+    assert_clean(root)
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc is not installed")
+def test_dynamically_registered_c_uses_preinstalled_compiler(judge_context):
+    client, application, root = judge_context
+    add_problem(client, "dynamic_c", [{"input": "1 2", "output": "3"}])
+    assert client.post("/api/languages/", json={
+        "name": "c", "file_ext": ".c", "compile_cmd": "gcc {src} -o {exe}",
+        "run_cmd": "{exe}",
+    }).status_code == 200
+    outcome = judge(
+        client, application, problem_id="dynamic_c", language="c",
+        code='#include <stdio.h>\nint main(){int a,b;scanf("%d%d",&a,&b);printf("%d",a+b);}',
+    )
+    assert outcome.status is Status.AC
+    assert outcome.score == 10
     assert_clean(root)

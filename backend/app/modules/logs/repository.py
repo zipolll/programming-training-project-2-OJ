@@ -10,6 +10,24 @@ class EvaluationLogRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    async def is_public(self, problem_id: str) -> bool:
+        async with self.database.connect() as connection:
+            row = await (await connection.execute(
+                "SELECT public_cases FROM problem_log_visibility WHERE problem_id = ?",
+                (problem_id,),
+            )).fetchone()
+        return bool(row and row[0])
+
+    async def set_public(self, problem_id: str, public: bool, now: datetime) -> None:
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "INSERT INTO problem_log_visibility VALUES (?, ?, ?) "
+                "ON CONFLICT(problem_id) DO UPDATE SET "
+                "public_cases=excluded.public_cases, updated_at=excluded.updated_at",
+                (problem_id, int(public), now.isoformat()),
+            )
+            await connection.commit()
+
     async def list_current(self, submission_id: int) -> list[EvaluationLogEntry]:
         async with self.database.connect() as connection:
             cursor = await connection.execute(

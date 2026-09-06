@@ -121,6 +121,10 @@ def _render_log(api: ApiClient, submission_id: str) -> None:
     except Exception as exc:
         show_error(exc)
         return
+    if "details" not in data:
+        badges([(f"得分 {data.get('score', '—')} / {data.get('counts', '—')}", "blue")])
+        st.info("此题尚未公开测试点明细，只能查看总得分和总分。")
+        return
     details = data.get("details", [])
     list_count(len(details))
     if not details:

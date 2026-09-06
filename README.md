@@ -54,9 +54,10 @@ API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <
 | 用户列表、修改角色 | 401 | 403 | 允许 | 不允许 |
 | 删除题目、重新评测 | 401 | 403 | 允许 | 不允许 |
 | Submission 详情 | 401 | 仅本人 | 任意提交 | 不允许 |
-| 私有评测日志 | 401 | 仅本人 | 任意日志 | 不允许 |
+| 私有评测日志 | 401 | 本人仅总得分/总分；他人 403 | 完整日志 | 不允许 |
+| 公开评测日志 | 401 | 可查看测试点明细和总得分/总分 | 完整日志 | 不允许 |
 
-用户变为 `banned` 时，其全部数据库 Session 会立即删除，之后登录返回 403。系统禁止将最后一个有效管理员降级或封禁，避免不可恢复的权限状态。`submit_count` 直接统计该用户持久化 Submission 总数；`resolve_count` 只统计 `status=success` 且最终结果为 `AC` 的不同 `problem_id`，因此同题多次 AC 只算一次，WA、pending 和 error 均不计入。
+用户变为 `banned` 时，其全部数据库 Session 会立即删除，之后登录返回 403。系统禁止将最后一个有效管理员降级或封禁，避免不可恢复的权限状态。`submit_count` 统计未因删题而排除的 Submission 总数；`resolve_count` 统计其中 `status=success` 且最终结果为 `AC` 的不同 `problem_id`，同题多次 AC 只算一次。删除题目会使相关用户的两项统计回退，历史提交仍保留；重新创建同一题号不会重新计入旧提交。启动时也会修正旧数据库中已删除题目的统计。
 
 课程 Step 1 题目接口如下，均使用统一的 `{code, msg, data}` 响应结构：
 
@@ -72,6 +73,12 @@ API 健康检查位于 <http://localhost:8000/api/health>，交互文档位于 <
 - `POST /api/languages/`：登录用户注册语言；请求字段严格遵循课程 API 的 `name`、`file_ext`、`compile_cmd`、`run_cmd`、`time_limit` 和 `memory_limit`。
 
 命令模板仅允许 `{src}`、`{exe}` 占位符。系统会用 `shlex` 将 API 中的字符串模板转换为参数数组，拒绝管道、重定向、命令连接符、变量展开和未知占位符；执行始终使用 `asyncio.create_subprocess_exec`，不会启用 shell。语言配置持久化在公共异步 SQLite 数据层中，名称全局唯一。
+
+动态注册不会安装解释器或编译器，需先在服务器预装相应工具，例如安装 GCC 后可注册 `gcc {src} -o {exe}` / `{exe}` 的 C 语言配置。
+
+时间与内存分别按“题目显式配置 → 语言配置 → 系统默认值”确定，系统默认值为 **3 秒、128 MB**。题目 JSON 保存时保留字段的省略状态；查询接口仍返回兼容的默认展示值，但不会将其写回并覆盖语言继承。编辑接口使用完整请求体，省略某项资源限制即恢复该项继承；显式填写 3 或 128 则视为题目设置。旧题目文件中已经写出的限制值继续视为显式设置，无法可靠推断其历史来源。
+
+内置 Python 使用可移植的运行时标记，执行时解析为当前服务解释器。启动会迁移旧版内置 Python 的绝对路径配置，保留其时间/内存设置。自定义语言的工具路径仍需适配部署系统。
 
 ## 个人题库
 
@@ -151,11 +158,35 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 
 ## 评测日志与访问审计
 
-`GET /api/submissions/{submission_id}/log` 返回当前评测版本的逐测试点 `details`、得分和总分。Submission 详情表示一次任务的总体状态；Evaluation Log 表示该任务当前版本的测试点明细，两者不会混在同一响应中。测试点日志仅允许提交者本人或管理员查看。
+`PUT /api/problems/{problem_id}/log_visibility` 仅供管理员配置 `public_cases`，请求体省略该字段时取 False。`GET /api/submissions/{submission_id}/log` 根据该设置返回当前版本的日志：False 时，本人仅获得 `score` 和 `counts`（不返回 `details`），其他普通用户返回 403；True 时，所有已登录用户可查看明细和总分；管理员始终可查看完整日志。他人公开日志不包含可能携带代码片段的错误摘要。公开日志不改变 Step 2/3 Submission 详情、用户代码与编译信息的访问权限。
 
 独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、角色/封禁变更、管理员重评、题目删除、AI 配置修改和 AI 题目导入。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录，也可通过分页接口 `GET /api/logs/audit/` 按用户、动作和成功状态查询全部已记录事件。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
 
-数据库初始化会幂等创建 `audit_logs` 及索引；重复初始化不会删除或重写已有用户、题目、Submission 或测试点结果。旧数据库中的 `problem_log_visibility` 表可能继续保留以避免破坏历史数据，但应用不再读取或写入该表。
+数据库初始化会幂等创建 `audit_logs`、`problem_log_visibility` 及索引，并保留旧的日志可见性设置。`GET /api/logs/access/` 的 `action` 固定为 `view_logs`。该接口与 `GET /api/submissions/` 都要求 `user_id`、`problem_id` 至少提供一个；只有 `page_size` 时从第一页开始，提供 `page` 却省略 `page_size` 返回 400。两个分页参数都省略时返回符合条件的全部记录。
+
+### 测试环境重置与异常响应
+
+`POST /api/reset/` 要求管理员登录。它等待当前 HTTP 请求结束、停止评测和 AI 后台任务，清除配置的题目目录内的题目 JSON 及运行数据库中的业务数据，重建初始管理员和内置语言，并使原登录会话失效。成功返回 `{"code":200,"msg":"system reset successfully","data":null}`。接口仅在调用时重置，不会在普通启动时清空数据；不要向有需保留数据的实例调用它。重置与任务管理适用于当前单进程服务，不应使用多个 Uvicorn worker 共享同一运行数据库。
+
+API 按 `401 > 403 > 400 > 429 > 409 > 404 > 500` 处理已知错误；受保护接口在解析 JSON 前鉴权，提交先校验请求与限流再查询资源。路由错误和未捕获异常也使用包含 `code` 的 JSON 响应，内部错误不会回显敏感信息。
+
+### Linux / WSL 验证
+
+Ubuntu 中先安装 `python3-venv`、`python3-pip`、`build-essential`，再独立创建 Linux 虚拟环境并安装依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-pip build-essential
+python3 -m venv ~/.venvs/oj
+source ~/.venvs/oj/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pytest
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+上述项目命令在仓库根目录执行。Windows `.venv` 不能作为 Linux 虚拟环境；使用独立的运行数据库与 `.env`，或先备份并迁移现有配置。不要让 Windows 与 WSL 两个服务同时使用同一数据库。
+
+AI 任务查询和事件接口允许创建者或管理员访问；其他用户返回 403。取消已结束任务返回 409，指定不存在的参考题目返回 404。模型配置仍按用户隔离。
 
 ## 题目存储
 

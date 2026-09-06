@@ -73,8 +73,10 @@ class JudgeService:
                         testcase.output,
                         language.expand_run(source, executable),
                         workspace,
-                        problem.time_limit or language.time_limit,
-                        problem.memory_limit or language.memory_limit,
+                        (problem.time_limit if "time_limit" in problem.model_fields_set
+                         else language.time_limit),
+                        (problem.memory_limit if "memory_limit" in problem.model_fields_set
+                         else language.memory_limit),
                     )
                     results.append(result)
                     captured_stdout = self._bounded_join(captured_stdout, stdout)

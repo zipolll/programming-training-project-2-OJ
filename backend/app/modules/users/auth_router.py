@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.users.dependencies import get_auth_service, require_login
 from backend.app.modules.users.models import Credentials, User
 from backend.app.modules.users.service import (
@@ -15,7 +16,7 @@ from backend.app.modules.users.service import (
     InvalidCredentialsError,
 )
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 BRIDGE_COOKIE_PATH = "/api/auth/bridge"
 BRIDGE_CSRF_HEADER = "X-OJ-Bridge"
 

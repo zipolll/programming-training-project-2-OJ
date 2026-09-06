@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.judge.language_service import LanguageNotFoundError
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.service import ProblemNotFoundError
@@ -18,9 +19,22 @@ from backend.app.modules.submissions.service import (
     submission_summary,
 )
 from backend.app.modules.users.dependencies import require_admin, require_login
-from backend.app.modules.users.models import User
+from backend.app.modules.users.models import User, UserRole
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
+
+
+async def require_submission_reader(
+    request: Request, user: Annotated[User, Depends(require_login)],
+) -> User:
+    raw = request.query_params.get("user_id")
+    try:
+        target = int(raw) if raw is not None else None
+    except ValueError:
+        target = None  # The typed query parameter will return 400.
+    if target is not None and target > 0 and user.role is not UserRole.ADMIN and target != user.id:
+        raise HTTPException(status_code=403, detail="Permission denied")
+    return user
 
 
 async def get_submission_service(request: Request) -> SubmissionService:
@@ -50,7 +64,7 @@ async def create_submission(
 
 @router.get("/", response_model=ApiResponse)
 async def list_submissions(
-    current_user: Annotated[User, Depends(require_login)],
+    current_user: Annotated[User, Depends(require_submission_reader)],
     service: Annotated[SubmissionService, Depends(get_submission_service)],
     user_id: Annotated[int | None, Query(ge=1)] = None,
     problem_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,

@@ -209,7 +209,7 @@ def test_log_access_clipping_and_access_audit(
     with sqlite3.connect(database_path) as connection:
         connection.execute(
             """
-            CREATE TABLE problem_log_visibility (
+            CREATE TABLE IF NOT EXISTS problem_log_visibility (
                 problem_id TEXT PRIMARY KEY,
                 public_cases INTEGER NOT NULL,
                 updated_at TEXT NOT NULL
@@ -246,6 +246,8 @@ def test_log_access_clipping_and_access_audit(
         "counts": 10,
     }
 
+    _admin(client)
+    assert client.put("/api/problems/P1/log_visibility", json={}).status_code == 200
     _register(client, "bobby")
     _login(client, "bobby")
     denied = client.get(f"/api/submissions/{submission_id}/log")
@@ -359,7 +361,7 @@ def test_schema_upgrade_is_idempotent_and_preserves_users(tmp_path: Path) -> Non
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         assert {"audit_logs", "submission_testcases"} <= tables
-        assert "problem_log_visibility" not in tables
+        assert "problem_log_visibility" in tables
 
 
 def test_new_route_handlers_are_async() -> None:

@@ -10,6 +10,7 @@ from backend.app.api.router import api_router
 from backend.app.core.config import Settings, get_settings
 from backend.app.core.database import Database
 from backend.app.core.exceptions import register_exception_handlers
+from backend.app.core.lifecycle import ResetIsolationMiddleware
 from backend.app.modules.agent.client import OpenAICompatibleClient
 from backend.app.modules.agent.crypto import CredentialCipher
 from backend.app.modules.agent.repository import AgentRepository
@@ -41,7 +42,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         database = Database(resolved_settings.database_path)
         await database.initialize()
         auth_service = AuthService(database, resolved_settings)
-        problem_service = ProblemService(ProblemRepository(resolved_settings.problems_path))
+        problem_service = ProblemService(
+            ProblemRepository(resolved_settings.problems_path), database,
+        )
         language_service = LanguageService(LanguageRepository(database))
         await auth_service.ensure_initial_admin()
         await database.migrate_agent_config()
@@ -110,6 +113,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = resolved_settings
+    application.add_middleware(
+        ResetIsolationMiddleware, reset_path=f"{resolved_settings.api_prefix}/reset/",
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,

@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.users.dependencies import (
     get_auth_service,
     require_login,
@@ -17,7 +18,7 @@ from backend.app.modules.users.service import (
     UsernameAlreadyExistsError,
 )
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 
 
 def _public_user(user: User) -> dict[str, object]:

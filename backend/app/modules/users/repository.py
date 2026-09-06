@@ -97,7 +97,7 @@ class UserRepository:
                        COUNT(DISTINCT CASE WHEN s.status = 'success' AND s.result = 'AC'
                                            THEN s.problem_id END) AS resolve_count
                 FROM users AS u
-                LEFT JOIN submissions AS s ON s.user_id = u.id
+                LEFT JOIN submissions AS s ON s.user_id = u.id AND s.statistics_excluded = 0
                 WHERE u.id = ?
                 GROUP BY u.id
                 """,
@@ -124,7 +124,7 @@ class UserRepository:
                        COUNT(DISTINCT CASE WHEN s.status = 'success' AND s.result = 'AC'
                                            THEN s.problem_id END) AS resolve_count
                 FROM users AS u
-                LEFT JOIN submissions AS s ON s.user_id = u.id
+                LEFT JOIN submissions AS s ON s.user_id = u.id AND s.statistics_excluded = 0
                 GROUP BY u.id
                 ORDER BY u.id
             """

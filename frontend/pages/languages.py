@@ -58,7 +58,7 @@ def render_language_registration(api: ApiClient) -> None:
         with section_card("默认资源限制", key="language_limits", icon="⏱️"):
             limit_columns = st.columns(2)
             time_limit = limit_columns[0].number_input(
-                "默认时间限制（秒）", min_value=0.01, max_value=60.0, value=1.0
+                "默认时间限制（秒）", min_value=0.01, max_value=60.0, value=3.0
             )
             memory_limit = limit_columns[1].number_input(
                 "默认内存限制（MB）", min_value=1, max_value=4096, value=128

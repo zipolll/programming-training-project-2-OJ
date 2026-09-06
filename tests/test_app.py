@@ -54,4 +54,5 @@ def test_expected_first_stage_endpoints_are_exposed() -> None:
         "/api/users/{user_id}",
         "/api/users/{user_id}/role",
     } <= paths
-    assert "/api/problems/{problem_id}/log_visibility" not in paths
+    assert "/api/problems/{problem_id}/log_visibility" in paths
+    assert "/api/reset/" in paths

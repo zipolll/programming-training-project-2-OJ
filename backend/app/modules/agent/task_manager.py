@@ -19,7 +19,7 @@ from backend.app.modules.agent.models import (
 )
 from backend.app.modules.agent.repository import AgentRepository, utc_now
 from backend.app.modules.agent.tools import AgentTools
-from backend.app.modules.problems.service import ProblemNotFoundError, ProblemService
+from backend.app.modules.problems.service import ProblemService
 
 
 def apply_requested_metadata(
@@ -64,6 +64,10 @@ class AgentCancelled(Exception):
     pass
 
 
+class AgentTaskFinishedError(Exception):
+    pass
+
+
 class AgentTaskManager:
     def __init__(
         self,
@@ -105,13 +109,13 @@ class AgentTaskManager:
                 await self._worker
         self._worker = None
         self._tracked.clear()
+        self._queue = asyncio.Queue()
+        self._active.clear()
+        self._cancel_events.clear()
 
     async def create(self, user_id: int, request: AuthoringRequest) -> str:
         if request.existing_problem_id:
-            try:
-                await self.problem_service.get_problem(request.existing_problem_id)
-            except (ProblemNotFoundError, ValueError) as exc:
-                raise ValueError("existing problem does not exist") from exc
+            await self.problem_service.get_problem(request.existing_problem_id)
         config = await self.model_client.configuration(user_id)
         task_id = str(uuid4())
         await self.repository.create_task(task_id, user_id, request, currency=config.currency)
@@ -153,12 +157,14 @@ class AgentTaskManager:
         self._queue.put_nowait(task_id)
         return True
 
-    async def cancel(self, task_id: str, user_id: int) -> None:
+    async def cancel(self, task_id: str, user_id: int, *, is_admin: bool = False) -> None:
         task = await self.repository.get_task(task_id)
-        if task is None or task.user_id != user_id:
+        if task is None:
             raise LookupError("task not found")
+        if task.user_id != user_id and not is_admin:
+            raise PermissionError("Permission denied")
         if task.status not in {AgentStatus.PENDING, AgentStatus.RUNNING}:
-            return
+            raise AgentTaskFinishedError
         await self.repository.update_task(task_id, cancellation_requested=True)
         event = self._cancel_events.setdefault(task_id, asyncio.Event())
         event.set()

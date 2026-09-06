@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.agent.client import ModelClientError, OpenAICompatibleClient
 from backend.app.modules.agent.crypto import CredentialCipher, CredentialUnavailableError, mask_key
 from backend.app.modules.agent.models import (
@@ -18,7 +19,7 @@ from backend.app.modules.agent.models import (
     validate_provider_url,
 )
 from backend.app.modules.agent.repository import AgentRepository
-from backend.app.modules.agent.task_manager import AgentTaskManager
+from backend.app.modules.agent.task_manager import AgentTaskFinishedError, AgentTaskManager
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.service import (
     ProblemAlreadyExistsError,
@@ -26,9 +27,9 @@ from backend.app.modules.problems.service import (
     ProblemService,
 )
 from backend.app.modules.users.dependencies import require_login
-from backend.app.modules.users.models import User
+from backend.app.modules.users.models import User, UserRole
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 
 
 async def get_repository(request: Request) -> AgentRepository:
@@ -55,10 +56,14 @@ def _task_data(task: Any) -> dict[str, Any]:
     return task.model_dump(mode="json", exclude={"user_id"})
 
 
-async def _owned_task(repository: AgentRepository, task_id: str, user_id: int):
+async def _owned_task(
+    repository: AgentRepository, task_id: str, user_id: int, *, is_admin: bool = False,
+):
     task = await repository.get_task(task_id)
-    if task is None or task.user_id != user_id:
+    if task is None:
         raise HTTPException(status_code=404, detail="agent task not found")
+    if task.user_id != user_id and not is_admin:
+        raise HTTPException(status_code=403, detail="Permission denied")
     return task
 
 
@@ -145,6 +150,8 @@ async def create_task(
 ) -> ApiResponse:
     try:
         task_id = await manager.create(current_user.id, payload)
+    except ProblemNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="problem not found") from exc
     except ModelClientError as exc:
         raise HTTPException(status_code=503, detail=exc.safe_message) from exc
     except ValueError as exc:
@@ -167,7 +174,9 @@ async def get_task(
     current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
 ) -> ApiResponse:
-    return ApiResponse(data=_task_data(await _owned_task(repository, task_id, current_user.id)))
+    return ApiResponse(data=_task_data(await _owned_task(
+        repository, task_id, current_user.id, is_admin=current_user.role is UserRole.ADMIN,
+    )))
 
 
 @router.get("/tasks/{task_id}/events", response_model=ApiResponse)
@@ -177,7 +186,9 @@ async def get_events(
     repository: Annotated[AgentRepository, Depends(get_repository)],
     after_id: Annotated[int, Query(ge=0)] = 0,
 ) -> ApiResponse:
-    await _owned_task(repository, task_id, current_user.id)
+    await _owned_task(
+        repository, task_id, current_user.id, is_admin=current_user.role is UserRole.ADMIN,
+    )
     events = await repository.list_events(task_id, after_id)
     return ApiResponse(data=[event.model_dump(mode="json") for event in events])
 
@@ -189,7 +200,11 @@ async def cancel_task(
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
-        await manager.cancel(task_id, current_user.id)
+        await manager.cancel(task_id, current_user.id, is_admin=current_user.role is UserRole.ADMIN)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="Permission denied") from exc
+    except AgentTaskFinishedError as exc:
+        raise HTTPException(status_code=409, detail="agent task already finished") from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="agent task not found") from exc
     return ApiResponse(msg="cancellation requested", data={"task_id": task_id})

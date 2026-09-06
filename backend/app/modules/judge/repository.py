@@ -1,6 +1,7 @@
 """Asynchronous SQLite persistence for language configurations."""
 
 import json
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from backend.app.core.database import Database
@@ -10,6 +11,28 @@ from backend.app.modules.judge.models import LanguageConfig
 class LanguageRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+
+    async def migrate_builtin_python(self) -> None:
+        """Replace a legacy absolute built-in interpreter with a portable runtime marker."""
+        config = await self.get("python")
+        if config is None or config.file_ext != ".py" or config.compile_args is not None:
+            return
+        if len(config.run_args) != 2 or config.run_args[1] != "{src}":
+            return
+        executable = config.run_args[0]
+        if not (
+            PureWindowsPath(executable).is_absolute() or PurePosixPath(executable).is_absolute()
+        ):
+            return
+        name = PureWindowsPath(executable).name.lower()
+        if not name.startswith("python"):
+            return
+        async with self.database.connect() as connection:
+            await connection.execute(
+                "UPDATE languages SET run_args = ? WHERE name = 'python'",
+                (json.dumps(["__oj_python__", "{src}"]),),
+            )
+            await connection.commit()
 
     async def seed_defaults(self, defaults: tuple[LanguageConfig, ...]) -> None:
         async with self.database.connect() as connection:

@@ -1,5 +1,7 @@
 """Evaluation-log access rules and structured access auditing."""
 
+from dataclasses import replace
+
 from backend.app.modules.judge.models import TestcaseStatus
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.logs.models import EvaluationLogEntry
@@ -30,11 +32,12 @@ class EvaluationLogService:
 
     async def get_visible(
         self, user: User, submission_id: int
-    ) -> tuple[Submission, list[EvaluationLogEntry]]:
+    ) -> tuple[Submission, list[EvaluationLogEntry] | None]:
         submission = await self.submissions.get(submission_id)
         if submission is None:
             raise EvaluationLogNotFoundError
-        permitted = user.role is UserRole.ADMIN or submission.user_id == user.id
+        public = await self.repository.is_public(submission.problem_id)
+        permitted = user.role is UserRole.ADMIN or submission.user_id == user.id or public
         await self.audit.record(
             actor_user_id=user.id,
             action="view_logs",
@@ -45,11 +48,17 @@ class EvaluationLogService:
         )
         if not permitted:
             raise EvaluationLogPermissionError
-        details = await self.repository.list_current(submission_id)
+        details = (
+            await self.repository.list_current(submission_id)
+            if user.role is UserRole.ADMIN or public else None
+        )
+        if (details is not None and user.role is not UserRole.ADMIN
+                and submission.user_id != user.id):
+            details = [replace(entry, error_summary="") for entry in details]
         return submission, details
 
 def evaluation_log_data(
-    submission: Submission, entries: list[EvaluationLogEntry]
+    submission: Submission, entries: list[EvaluationLogEntry] | None
 ) -> dict[str, object]:
     details = [
         {
@@ -59,11 +68,11 @@ def evaluation_log_data(
             "memory": entry.memory,
             **({"error_summary": entry.error_summary} if entry.error_summary else {}),
         }
-        for entry in entries
+        for entry in entries or []
     ]
     # Legacy CE submissions predate per-case records. Use the stored total,
     # never the (possibly edited or deleted) problem's current testcase list.
-    if (not details and submission.status is SubmissionStatus.SUCCESS
+    if (entries is not None and not details and submission.status is SubmissionStatus.SUCCESS
             and submission.result is TestcaseStatus.CE):
         details = [
             {"id": index, "result": "CE", "time": 0.0, "memory": 0.0,
@@ -71,7 +80,7 @@ def evaluation_log_data(
             for index in range(1, submission.counts // 10 + 1)
         ]
     return {
-        "details": details,
+        **({"details": details} if entries is not None else {}),
         "score": submission.score if submission.status is SubmissionStatus.SUCCESS else None,
         "counts": submission.counts,
     }

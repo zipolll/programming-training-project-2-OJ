@@ -44,6 +44,8 @@ class AuditService:
         page: int | None,
         page_size: int | None,
     ) -> list[AuditLog]:
+        if user_id is None and problem_id is None:
+            raise ValueError("user_id or problem_id is required")
         if page is not None and page_size is None:
             raise ValueError("page_size is required when page is provided")
         return await self.repository.list_access(

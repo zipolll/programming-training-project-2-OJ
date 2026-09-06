@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.problem_banks.models import (
     BankInput,
     CreateBankInput,
@@ -17,7 +18,7 @@ from backend.app.modules.problem_banks.service import BankService
 from backend.app.modules.users.dependencies import require_login
 from backend.app.modules.users.models import User
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 
 
 async def service(request: Request) -> AsyncIterator[BankService]:

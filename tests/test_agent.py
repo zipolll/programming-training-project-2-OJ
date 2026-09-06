@@ -315,7 +315,7 @@ def test_regular_user_has_isolated_agent_config_and_tasks(agent_client) -> None:
         "/api/auth/login", json={"username": "admin", "password": "admintestpassword"}
     )
     assert client.get("/api/agent/config").json()["data"]["model_name"] == "test-model"
-    assert client.get(f"/api/agent/tasks/{alice_task['task_id']}").status_code == 404
+    assert client.get(f"/api/agent/tasks/{alice_task['task_id']}").status_code == 200
     assert all(
         item["task_id"] != alice_task["task_id"]
         for item in client.get("/api/agent/tasks").json()["data"]

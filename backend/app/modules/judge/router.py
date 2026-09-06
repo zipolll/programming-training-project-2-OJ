@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.judge.language_service import (
     LanguageAlreadyExistsError,
     LanguageService,
@@ -14,7 +15,7 @@ from backend.app.modules.judge.models import LanguageRegistration
 from backend.app.modules.users.dependencies import require_login
 from backend.app.modules.users.models import User
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 
 
 async def get_language_service(request: Request) -> LanguageService:

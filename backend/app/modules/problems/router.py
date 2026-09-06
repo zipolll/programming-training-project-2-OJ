@@ -1,12 +1,15 @@
 """Course-compatible problem management API."""
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.logs.audit_service import AuditService
+from backend.app.modules.logs.repository import EvaluationLogRepository
 from backend.app.modules.problems.models import Problem
 from backend.app.modules.problems.service import (
     ProblemAlreadyExistsError,
@@ -17,7 +20,39 @@ from backend.app.modules.problems.service import (
 from backend.app.modules.users.dependencies import require_admin, require_login
 from backend.app.modules.users.models import User
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
+
+
+class LogVisibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    public_cases: bool = False
+
+
+@router.put("/{problem_id}/log_visibility", response_model=ApiResponse)
+async def set_log_visibility(
+    problem_id: str,
+    payload: LogVisibilityRequest,
+    request: Request,
+    current_user: Annotated[User, Depends(require_admin)],
+) -> ApiResponse:
+    try:
+        await request.app.state.problem_service.get_problem(problem_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid problem id") from exc
+    except ProblemNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="problem not found") from exc
+    repository = EvaluationLogRepository(request.app.state.database)
+    before = await repository.is_public(problem_id)
+    await repository.set_public(problem_id, payload.public_cases, datetime.now(timezone.utc))
+    await request.app.state.audit_service.record(
+        actor_user_id=current_user.id, action="update_log_visibility", target_type="problem",
+        target_id=problem_id, success=True, status=200,
+        changes={"public_cases": {"before": before, "after": payload.public_cases}},
+    )
+    return ApiResponse(
+        msg="log visibility updated",
+        data={"problem_id": problem_id, "public_cases": payload.public_cases},
+    )
 
 
 async def get_problem_service(request: Request) -> ProblemService:

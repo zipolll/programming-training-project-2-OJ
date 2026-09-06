@@ -93,6 +93,7 @@ class EvaluationTaskManager:
             await worker
         self._worker = None
         self._tracked.clear()
+        self._queue = asyncio.Queue()
 
     async def _run(self) -> None:
         while True:

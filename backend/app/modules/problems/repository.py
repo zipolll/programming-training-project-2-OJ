@@ -56,7 +56,7 @@ class ProblemRepository:
         try:
             with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="\n") as temp_file:
                 json.dump(
-                    problem.model_dump(mode="json"),
+                    problem.model_dump(mode="json", exclude_unset=True),
                     temp_file,
                     ensure_ascii=False,
                     indent=2,
@@ -79,10 +79,12 @@ class ProblemRepository:
                 key=lambda problem: problem.id,
             )
 
-        return await asyncio.to_thread(read_all)
+        async with self._write_lock:
+            return await asyncio.to_thread(read_all)
 
     async def get(self, problem_id: str) -> Problem | None:
-        return await asyncio.to_thread(self._read_sync, self._path(problem_id))
+        async with self._write_lock:
+            return await asyncio.to_thread(self._read_sync, self._path(problem_id))
 
     async def create(self, problem: Problem) -> bool:
         path = self._path(problem.id)

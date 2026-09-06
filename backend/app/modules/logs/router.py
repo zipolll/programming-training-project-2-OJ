@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.logs.audit_models import AuditLog
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.logs.service import (
@@ -16,8 +17,8 @@ from backend.app.modules.logs.service import (
 from backend.app.modules.users.dependencies import require_admin, require_login
 from backend.app.modules.users.models import User
 
-router = APIRouter()
-submission_log_router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
+submission_log_router = APIRouter(route_class=CourseRoute)
 
 
 def _audit_log_data(entry: AuditLog) -> dict[str, object]:
@@ -83,7 +84,7 @@ async def list_log_access(
             {
                 "user_id": str(entry.actor_user_id),
                 "problem_id": entry.problem_id,
-                "action": "view_log",
+                "action": "view_logs",
                 "time": entry.created_at.date().isoformat(),
                 "status": str(entry.status),
             }

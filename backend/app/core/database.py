@@ -114,6 +114,12 @@ CREATE TABLE IF NOT EXISTS submission_testcases (
     PRIMARY KEY (submission_id, evaluation_version, testcase_id)
 );
 
+CREATE TABLE IF NOT EXISTS problem_log_visibility (
+    problem_id TEXT PRIMARY KEY,
+    public_cases INTEGER NOT NULL DEFAULT 0 CHECK (public_cases IN (0, 1)),
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -218,6 +224,12 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with self.connect() as connection:
             await connection.executescript(SCHEMA)
+            cursor = await connection.execute("PRAGMA table_info(submissions)")
+            if "statistics_excluded" not in {row[1] for row in await cursor.fetchall()}:
+                await connection.execute(
+                    "ALTER TABLE submissions ADD COLUMN "
+                    "statistics_excluded INTEGER NOT NULL DEFAULT 0"
+                )
             await connection.commit()
 
     async def migrate_agent_config(self) -> None:
@@ -266,6 +278,22 @@ class Database:
                 (int(admin[0]),),
             )
             await connection.execute("DROP TABLE agent_config_legacy")
+            await connection.commit()
+
+    async def reset(self) -> None:
+        """Remove application records in foreign-key order, retaining the schema."""
+        tables = (
+            "agent_imports", "agent_model_calls", "agent_events", "agent_tasks", "agent_config",
+            "audit_logs", "submission_testcases", "submissions", "problem_log_visibility",
+            "problem_bank_items", "problem_banks", "auth_bridge_tickets", "auth_bridges",
+            "sessions", "users", "languages",
+        )
+        async with self.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            await connection.execute("UPDATE agent_tasks SET parent_task_id = NULL")
+            for table in tables:
+                await connection.execute(f"DELETE FROM {table}")
+            await connection.execute("DELETE FROM sqlite_sequence")
             await connection.commit()
 
     @asynccontextmanager

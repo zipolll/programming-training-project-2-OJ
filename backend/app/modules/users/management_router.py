@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from backend.app.core.responses import ApiResponse
+from backend.app.core.routing import CourseRoute
 from backend.app.modules.users.dependencies import get_auth_service, require_admin, require_login
 from backend.app.modules.users.models import Credentials, RoleUpdateRequest, User
 from backend.app.modules.users.service import (
@@ -17,7 +18,7 @@ from backend.app.modules.users.service import (
     user_statistics_data,
 )
 
-router = APIRouter()
+router = APIRouter(route_class=CourseRoute)
 
 
 async def get_user_service(request: Request) -> UserService:
