@@ -14,7 +14,7 @@ from frontend.navigation import restore_widget, save_widgets
 from frontend.pages import agent, audit, auth, languages, problem_banks, problems, submissions
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from preview_data import PROBLEM, PreviewApi
+from preview_data import PROBLEM, AgentPreviewApi, PreviewApi
 
 st.set_page_config(layout="wide")
 st.navigation([st.Page(lambda: None, title="预览", default=True)]).run()
@@ -36,6 +36,9 @@ pages = [
     "编辑题目",
     "模型配置",
     "AI 命题",
+    "AI 结果",
+    "AI 异常",
+    "AI 进度",
     "语言注册",
     "代码提交",
     "题目内提交",
@@ -72,6 +75,9 @@ elif page == "模型配置":
     agent._config(api)
 elif page == "AI 命题":
     agent._authoring_form(api)
+elif page in {"AI 结果", "AI 异常", "AI 进度"}:
+    scenario = {"AI 结果": "success", "AI 异常": "error", "AI 进度": "running"}[page]
+    agent._task_monitor(AgentPreviewApi(scenario))
 elif page == "语言注册":
     languages.render_language_registration(api)
 elif page == "代码提交":

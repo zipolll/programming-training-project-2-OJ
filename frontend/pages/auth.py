@@ -169,14 +169,25 @@ def render_profile(api: ApiClient, user: dict[str, object]) -> None:
         badges([("管理员", "orange"), ("平台管理权限", "cyan")])
     else:
         badges([("普通用户", "cyan")])
-    with split_view("profile", (2, 3)) as workspace:
-        with workspace[0], section_card("账户信息", key="profile_identity", stretch=True):
-            info_card("用户名", data.get("username", "—"), icon="👤")
-            info_card("加入时间", data.get("join_time", "—"), icon="📅")
-        with workspace[1], section_card("训练统计", key="profile_stats", stretch=True):
-            submitted, resolved = st.columns(2)
-            submitted.metric("累计提交", data.get("submit_count", 0))
-            resolved.metric("通过题目", data.get("resolve_count", 0))
+    with split_view("profile", (1, 1)) as workspace:
+        with (
+            workspace[0], section_card("账户信息", key="profile_identity", stretch=True),
+            st.container(key="oj_profile_fields_identity"),
+        ):
+            username, joined = st.columns(2, gap="medium")
+            with username:
+                info_card("用户名", data.get("username", "—"))
+            with joined:
+                info_card("加入时间", data.get("join_time", "—"))
+        with (
+            workspace[1], section_card("训练统计", key="profile_stats", stretch=True),
+            st.container(key="oj_profile_fields_stats"),
+        ):
+            submitted, resolved = st.columns(2, gap="medium")
+            with submitted:
+                info_card("累计提交", data.get("submit_count", 0))
+            with resolved:
+                info_card("通过题目", data.get("resolve_count", 0))
 
 
 def render_user_admin(api: ApiClient) -> None:

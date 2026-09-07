@@ -16,6 +16,7 @@ from frontend.components.layout import (
     cell_text,
     data_table,
     form_row,
+    page_heading,
     section_card,
     split_view,
     table_row,
@@ -278,7 +279,23 @@ def render_problem_detail(
 
     st.button(back_label, on_click=_close_problem)
     actions = problem_detail_actions(role)
-    page_header(problem["title"], "阅读题目要求，设计并提交你的解法。")
+    with page_heading(
+        problem["title"], "阅读题目要求，设计并提交你的解法。", key="problem",
+    ):
+        if actions:
+            from frontend.components.bank_controls import render_add_to_bank
+
+            with st.container(
+                key="oj_problem_actions", horizontal=True, horizontal_alignment="right",
+            ):
+                st.button(
+                    "去提交", type="primary", on_click=_select_detail_action, args=("提交",),
+                )
+                render_add_to_bank(api, str(problem["id"]))
+                with st.popover("更多", icon=":material/more_horiz:"):
+                    st.button("编辑题目", on_click=_select_detail_action, args=("编辑",))
+                    if "删除" in actions:
+                        st.button("删除题目", on_click=_select_detail_action, args=("删除",))
     with st.container(key="oj_problem_reading"):
         with st.container(key="oj_problem_facts"):
             with st.container(key="oj_problem_summary"):
@@ -301,20 +318,6 @@ def render_problem_detail(
             metadata = problem_metadata_items({**problem, "difficulty": ""})
             if metadata:
                 badges(metadata)
-            if actions:
-                from frontend.components.bank_controls import render_add_to_bank
-
-                with st.container(
-                    key="oj_problem_actions", horizontal=True, horizontal_alignment="right",
-                ):
-                    st.button(
-                        "去提交", type="primary", on_click=_select_detail_action, args=("提交",),
-                    )
-                    render_add_to_bank(api, str(problem["id"]))
-                    with st.popover("更多", icon=":material/more_horiz:"):
-                        st.button("编辑题目", on_click=_select_detail_action, args=("编辑",))
-                        if "删除" in actions:
-                            st.button("删除题目", on_click=_select_detail_action, args=("删除",))
         with st.container(border=False, key="problem_statement"):
             section_header("题目描述", icon="📖")
             st.markdown(problem["description"])

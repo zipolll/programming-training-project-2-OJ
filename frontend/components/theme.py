@@ -433,8 +433,20 @@ button:focus-visible, a:focus-visible, [role="radio"]:focus-visible,
 .st-key-oj_problem_facts .oj-info-card__value { font-size: 16px; font-weight: 500; }
 .st-key-oj_problem_reading { gap: 1.5rem; }
 .st-key-oj_problem_facts { padding: 1.5rem 2rem; }
-.st-key-oj_problem_actions { margin-top: .25rem; }
-.st-key-oj_panel_body_profile_identity .oj-info-card { padding: .5rem 0; }
+.st-key-oj_problem_actions { gap: .5rem; }
+.st-key-oj_split_profile > div > [data-testid="stHorizontalBlock"] { gap: 1.5rem; }
+[class*="st-key-oj_profile_fields_"] .oj-info-card { padding: .25rem 0; }
+[class*="st-key-oj_profile_fields_"] .oj-info-card__value { font-size: 20px; }
+[class*="st-key-oj_profile_fields_"] [data-testid="stHorizontalBlock"] { gap: 1rem; }
+[class*="st-key-oj_profile_fields_"] [data-testid="stColumn"] {
+  flex: 1 1 calc(50% - .5rem) !important;
+  width: calc(50% - .5rem) !important; min-width: 0 !important;
+}
+.st-key-oj_panel_body_agent_request .oj-info-card { padding: .25rem 0; }
+.st-key-oj_panel_body_agent_request .oj-info-card__value {
+  font-size: 16px; font-weight: 500; line-height: 1.75; white-space: pre-wrap;
+}
+.st-key-oj_agent_long_requirements .oj-info-card__value { font-weight: 400; }
 [class*="st-key-detail_bank_add_"] button {
   min-height: 36px; padding: .375rem .75rem; font-weight: 500;
 }

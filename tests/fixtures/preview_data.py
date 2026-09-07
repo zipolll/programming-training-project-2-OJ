@@ -22,6 +22,68 @@ PROBLEM = {
 }
 
 
+class AgentPreviewApi:
+    """Thread-safe offline tasks for the production polling fragment."""
+
+    def __init__(self, status="success"):
+        self.status = status
+
+    def get(self, path, params=None):
+        if path == "/agent/tasks":
+            return {"data": [self.task(revision) for revision in (2, 1)]}
+        if path.endswith("/events"):
+            events = [
+                {"event_id": index, "timestamp": "2026-09-07T10:20:00",
+                 "stage": stage, "message": message}
+                for index, (stage, message) in enumerate([
+                    ("生成题面", "已生成题面、样例与参考解法。"),
+                    ("验证", "正在检查样例与参考程序。"),
+                    (self.status, "离线预览：保留任务事件与结果供人工检查。"),
+                ], 1)
+            ]
+            after_id = (params or {}).get("after_id", 0)
+            return {"data": [e for e in events if e["event_id"] > after_id]}
+        if path.startswith("/agent/tasks/fixture-"):
+            return {"data": self.task(int(path.rsplit("-", 1)[1]))}
+        raise AssertionError(f"Unexpected fixture request: {path}")
+
+    def task(self, revision):
+        return {
+            "task_id": f"fixture-{revision}", "revision": revision,
+            "status": self.status, "stage": "验证" if self.status == "running" else self.status,
+            "progress": 65 if self.status == "running" else 100,
+            "created_at": "2026-09-07T10:20:00", "input_tokens": 2800,
+            "output_tokens": 1600, "total_tokens": 4400, "cost": "0.012",
+            "currency": "USD", "usage_estimated": True,
+            "request": {
+                "problem_type": "基础编程", "difficulty": "中等",
+                "required_knowledge": ["Python 类及其方法", "继承"],
+                "background_preference": "以游戏角色与技能为背景",
+                "additional_requirements": (
+                    "至少设计 2 个类，其中存在继承关系。\n"
+                    "考察实例方法、@classmethod、@staticmethod 和 @property。"
+                    "属性应表示由已有信息计算得到的状态，例如等级、平均值或总价值。"
+                    "子类需要重写父类的方法，并使用 super() 完成初始化。\n"
+                    "输入规模不需要很大，重点是对象设计和方法调用；"
+                    "题目应有明确的输入和输出，并提供完整的边界样例。"
+                ),
+            },
+            "final_problem": {
+                "problem": PROBLEM, "solution_explanation": "使用字典累计词频后排序。",
+                "complexity_analysis": "O(n log n)",
+                "reference_solution": (
+                    "from collections import Counter\nprint(Counter(input().split()))"
+                ),
+                "reference_solution_language": "python",
+            } if self.status == "success" else None,
+            "validation_report": {"status": self.status},
+        }
+
+    def post(self, path, json=None):
+        st.session_state["fixture_saved"] = (path, json)
+        return {"data": {"task_id": "fixture-2", "problem_id": PROBLEM["id"]}}
+
+
 class PreviewApi:
     base_url = "http://offline-ui-fixture"
 

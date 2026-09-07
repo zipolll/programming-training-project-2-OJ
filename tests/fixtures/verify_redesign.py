@@ -30,6 +30,9 @@ PAGES = [
     ("编辑题目", "edit"),
     ("模型配置", "ai-config"),
     ("AI 命题", "ai-create"),
+    ("AI 结果", "ai-result"),
+    ("AI 异常", "ai-error"),
+    ("AI 进度", "ai-progress"),
     ("语言注册", "languages"),
     ("用户管理", "users"),
     ("访问审计", "audit"),
@@ -137,12 +140,29 @@ with sync_playwright() as pw:
                     page.locator(f".st-key-oj_panel_heading_profile_{key} h2").bounding_box()
                     for key in ("identity", "stats")
                 ]
+                assert abs(panels[0]["width"] - panels[1]["width"]) < 2, panels
+                assert abs(panels[0]["height"] - panels[1]["height"]) < 2, panels
+                for key in ("identity", "stats"):
+                    fields = page.locator(f".st-key-oj_profile_fields_{key} .oj-info-card")
+                    first, second = [field.bounding_box() for field in fields.all()]
+                    assert abs(first["y"] - second["y"]) < 2, (key, first, second)
+                    assert abs(first["width"] - second["width"]) < 2
                 if width == 1440:
                     assert abs(panels[0]["y"] - panels[1]["y"]) < 2, panels
                     assert abs(panels[0]["height"] - panels[1]["height"]) < 2, panels
                     assert abs(headings[0]["y"] - headings[1]["y"]) < 2, headings
                 else:
                     assert panels[1]["y"] >= panels[0]["y"] + panels[0]["height"]
+            if slug in {"ai-result", "ai-error", "ai-progress"}:
+                for key in ("history", "progress", "request", "events"):
+                    panel = page.locator(f".st-key-oj_panel_default_agent_{key}")
+                    expect(panel).to_have_count(1)
+                    assert panel.evaluate("e => getComputedStyle(e).backgroundColor") == (
+                        "rgb(255, 255, 255)"
+                    )
+                expect(page.get_by_role("button", name="导入题库", exact=True)).to_have_count(
+                    1 if slug == "ai-result" else 0
+                )
             if width == 390 and page.locator(".oj-field-label").count():
                 assert metrics["headers"] == 0 and metrics["labels"] > 0
             for badge in metrics["badges"]:
@@ -169,6 +189,11 @@ with sync_playwright() as pw:
         page.wait_for_timeout(150)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
         facts = page.locator(".st-key-oj_problem_facts").bounding_box()
+        toolbar = page.locator(".st-key-oj_problem_actions").bounding_box()
+        assert toolbar["y"] + toolbar["height"] <= facts["y"], toolbar
+        if width == 1440:
+            heading = page.locator(".st-key-oj_page_heading_problem h1").bounding_box()
+            assert toolbar["x"] > heading["x"] + heading["width"]
         statement = page.locator(".st-key-problem_statement").bounding_box()
         assert abs(facts["x"] - statement["x"]) < 2
         assert abs(facts["width"] - statement["width"]) < 2

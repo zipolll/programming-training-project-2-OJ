@@ -101,8 +101,10 @@ def _task_overview(task: dict[str, Any]) -> None:
         ):
             with column:
                 info_card(label, value, icon=icon, compact=True)
-    for label, value, icon in long_optional:
-        info_card(label, value, icon=icon)
+    if long_optional:
+        with st.container(key="oj_agent_long_requirements"):
+            for label, value, icon in long_optional:
+                info_card(label, value, icon=icon)
 
     created_at = str(task.get("created_at") or "").replace("T", " ")[:19]
     details = f"任务编号：{task.get('task_id', '未知')}"
@@ -337,26 +339,26 @@ def _authoring_form(api: ApiClient) -> None:
 
 
 def _result(api: ApiClient, task: dict[str, Any]) -> None:
-    section_header("资源消耗", icon="📊")
-    usage = st.columns(4)
-    usage[0].metric("输入 Token", task["input_tokens"])
-    usage[1].metric("输出 Token", task["output_tokens"])
-    usage[2].metric("总 Token", task["total_tokens"])
-    usage[3].metric("费用", f"{format_cost(task['cost'])} {task['currency']}")
-    if task["usage_estimated"]:
-        st.caption("费用与 Token 数量为估算值。")
+    with section_card("资源消耗", key="agent_usage", icon="📊"):
+        usage = st.columns(4)
+        usage[0].metric("输入 Token", task["input_tokens"])
+        usage[1].metric("输出 Token", task["output_tokens"])
+        usage[2].metric("总 Token", task["total_tokens"])
+        usage[3].metric("费用", f"{format_cost(task['cost'])} {task['currency']}")
+        if task["usage_estimated"]:
+            st.caption("费用与 Token 数量为估算值。")
     generated = task.get("final_problem") or task.get("draft")
     if generated:
         problem = generated["problem"]
-        section_header("题目详情", icon="📘")
-        badges(
-            [
-                (str(problem.get("difficulty", "未标注难度")), "orange"),
-                (f"{len(problem.get('testcases', []))} 个测试点", "cyan"),
-                *((str(tag), "green") for tag in problem.get("tags", [])),
-            ]
-        )
-        with st.container(border=True, key=f"agent_problem_detail_{task['task_id']}"):
+        with st.container(border=False, key=f"agent_problem_detail_{task['task_id']}"):
+            section_header("题目详情", icon="📘")
+            badges(
+                [
+                    (str(problem.get("difficulty", "未标注难度")), "orange"),
+                    (f"{len(problem.get('testcases', []))} 个测试点", "cyan"),
+                    *((str(tag), "green") for tag in problem.get("tags", [])),
+                ]
+            )
             st.markdown(f"## {problem['title']}")
             section_header("题目描述", icon="📖")
             st.markdown(problem["description"])
@@ -389,67 +391,70 @@ def _result(api: ApiClient, task: dict[str, Any]) -> None:
         with st.expander("验证报告", expanded=False):
             st.json(task["validation_report"])
     if task["status"] == "success":
-        feedback = st.text_area(
-            "继续修改",
-            key=f"feedback-{task['task_id']}",
-            placeholder=REQUIRED_PLACEHOLDER,
-        )
-        if st.button("创建新 revision") and feedback:
-            try:
-                result = api.post(
-                    f"/agent/tasks/{task['task_id']}/refine", json={"feedback": feedback}
-                )["data"]
-                update_route(agent_task_id=result["task_id"])
-                st.session_state.agent_events = []
-                st.session_state.agent_after_id = 0
-                st.rerun()
-            except Exception as exc:
-                show_error(exc)
-        confirmed = st.checkbox("我已人工审阅并确认导入", key=f"confirm-{task['task_id']}")
-        if st.button("导入题库", disabled=not confirmed):
-            try:
-                result = api.post(
-                    f"/agent/tasks/{task['task_id']}/import",
-                    json={"confirm": True, "update_existing": False},
-                )["data"]
-            except Exception as exc:
-                show_error(exc)
-            else:
-                invalidate_problem_cache()
-                st.success(f"已导入题目 {result['problem_id']}。")
+        with section_card("修订与导入", key="agent_review"):
+            feedback = st.text_area(
+                "继续修改",
+                key=f"feedback-{task['task_id']}",
+                placeholder=REQUIRED_PLACEHOLDER,
+            )
+            if st.button("创建新 revision") and feedback:
+                try:
+                    result = api.post(
+                        f"/agent/tasks/{task['task_id']}/refine", json={"feedback": feedback}
+                    )["data"]
+                    update_route(agent_task_id=result["task_id"])
+                    st.session_state.agent_events = []
+                    st.session_state.agent_after_id = 0
+                    st.rerun()
+                except Exception as exc:
+                    show_error(exc)
+            confirmed = st.checkbox("我已人工审阅并确认导入", key=f"confirm-{task['task_id']}")
+            if st.button("导入题库", disabled=not confirmed):
+                try:
+                    result = api.post(
+                        f"/agent/tasks/{task['task_id']}/import",
+                        json={"confirm": True, "update_existing": False},
+                    )["data"]
+                except Exception as exc:
+                    show_error(exc)
+                else:
+                    invalidate_problem_cache()
+                    st.success(f"已导入题目 {result['problem_id']}。")
 
 
 def _task_monitor(api: ApiClient) -> None:
-    section_header("任务进度与版本", icon="🧭")
-    try:
-        tasks = api.get("/agent/tasks")["data"]
-    except Exception as exc:
-        show_error(exc)
-        return
-    list_count(len(tasks))
-    if not tasks:
-        empty_state("尚无命题任务，请先在“创建任务”中发起挑战。", icon="🤖")
-        return
-    labels = {
-        item["task_id"]: (f"revision {item['revision']} · {item['status']} · {item['task_id'][:8]}")
-        for item in tasks
-    }
-    restore_widget("agent_task_id", tasks[0]["task_id"], options=labels)
-    selected = st.selectbox(
-        "版本历史", list(labels), format_func=labels.get, key="agent_task_id",
-        on_change=save_widgets, args=("agent_task_id",),
-    )
-    if st.session_state.get("agent_events_task") != selected:
-        st.session_state.agent_events_task = selected
-        st.session_state.agent_events = []
-        st.session_state.agent_after_id = 0
-    selected_status = next(item["status"] for item in tasks if item["task_id"] == selected)
-    pause_key = f"agent-poll-paused-{selected}"
-    if st.session_state.get(pause_key):
-        st.warning("网络错误后已暂停自动轮询。")
-        if st.button("重试轮询"):
-            st.session_state[pause_key] = False
-            st.rerun()
+    with section_card("任务进度与版本", key="agent_history", icon="🧭"):
+        try:
+            tasks = api.get("/agent/tasks")["data"]
+        except Exception as exc:
+            show_error(exc)
+            return
+        list_count(len(tasks))
+        if not tasks:
+            empty_state("尚无命题任务，请先在“创建任务”中发起挑战。", icon="🤖")
+            return
+        labels = {
+            item["task_id"]: (
+                f"revision {item['revision']} · {item['status']} · {item['task_id'][:8]}"
+            )
+            for item in tasks
+        }
+        restore_widget("agent_task_id", tasks[0]["task_id"], options=labels)
+        selected = st.selectbox(
+            "版本历史", list(labels), format_func=labels.get, key="agent_task_id",
+            on_change=save_widgets, args=("agent_task_id",),
+        )
+        if st.session_state.get("agent_events_task") != selected:
+            st.session_state.agent_events_task = selected
+            st.session_state.agent_events = []
+            st.session_state.agent_after_id = 0
+        selected_status = next(item["status"] for item in tasks if item["task_id"] == selected)
+        pause_key = f"agent-poll-paused-{selected}"
+        if st.session_state.get(pause_key):
+            st.warning("网络错误后已暂停自动轮询。")
+            if st.button("重试轮询"):
+                st.session_state[pause_key] = False
+                st.rerun()
     interval = (
         1
         if selected_status in {"pending", "running"} and not st.session_state.get(pause_key, False)
@@ -479,18 +484,20 @@ def _task_monitor(api: ApiClient) -> None:
         st.session_state.agent_events = merged
         if merged:
             st.session_state.agent_after_id = merged[-1]["event_id"]
-        st.progress(task["progress"] / 100, text=f"{task['stage']} · {task['status']}")
-        status_badge(str(task["status"]))
-        _task_overview(task)
-        if task["status"] in {"pending", "running"} and st.button("中断任务"):
-            try:
-                api.post(f"/agent/tasks/{selected}/cancel")
-            except Exception as exc:
-                show_error(exc)
-        section_header("任务事件", icon="📜")
-        list_count(len(merged))
-        for event in merged[-30:]:
-            timeline_event(event["timestamp"], event["stage"], event["message"])
+        with section_card("执行进度", key="agent_progress"):
+            st.progress(task["progress"] / 100, text=f"{task['stage']} · {task['status']}")
+            status_badge(str(task["status"]))
+            if task["status"] in {"pending", "running"} and st.button("中断任务"):
+                try:
+                    api.post(f"/agent/tasks/{selected}/cancel")
+                except Exception as exc:
+                    show_error(exc)
+        with section_card("命题要求", key="agent_request"):
+            _task_overview(task)
+        with section_card("任务事件", key="agent_events", icon="📜"):
+            list_count(len(merged))
+            for event in merged[-30:]:
+                timeline_event(event["timestamp"], event["stage"], event["message"])
         if task["status"] in TERMINAL:
             _result(api, task)
             if selected_status not in TERMINAL:
