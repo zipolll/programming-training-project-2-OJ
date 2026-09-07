@@ -24,13 +24,17 @@ def page_header(
     eyebrow: str = "PROGRAMMING TRAINING OJ",
     variant: str = "default",
 ) -> None:
-    modifier = " oj-hero--ai" if variant == "ai" else ""
+    modifier = " oj-hero--home" if variant == "home" else ""
+    # Resource identifiers help orient the reader; generic promotional eyebrows do not.
+    context = ""
+    if eyebrow.startswith("PROBLEM ") and len(eyebrow.split()) == 2:
+        context = f'<div class="oj-hero__eyebrow">题号 {_safe(eyebrow[8:])}</div>'
     st.markdown(
         _html(
             f"""
             <section class="oj-hero{modifier}">
-              <div class="oj-hero__eyebrow">{_safe(eyebrow)}</div>
-              <h1><span class="oj-hero__icon">{_safe(icon)}</span>{_safe(title)}</h1>
+              {context}
+              <h1>{_safe(title)}</h1>
               <p>{_safe(subtitle)}</p>
             </section>
             """
@@ -45,7 +49,6 @@ def section_header(title: str, subtitle: str = "", *, icon: str = "✦") -> None
         _html(
             f"""
             <div class="oj-section-title">
-              <span class="oj-section-title__icon">{_safe(icon)}</span>
               <div><h2>{_safe(title)}</h2>{description}</div>
             </div>
             """
@@ -75,7 +78,7 @@ def info_card(
         _html(
             f"""
             <div class="oj-info-card{modifier}">
-              <div class="oj-info-card__label">{_safe(icon)} {_safe(label)}</div>
+              <div class="oj-info-card__label">{_safe(label)}</div>
               <div class="oj-info-card__value">{_safe(value)}</div>
             </div>
             """
@@ -85,16 +88,30 @@ def info_card(
 
 
 def feature_grid(items: list[tuple[str, str, str]]) -> None:
+    # Static line drawings share the navigation's monochrome visual language.
+    drawings = (
+        '<path d="M4 4h12a4 4 0 0 1 4 4v13H8a4 4 0 0 1-4-4V4Z"/>'
+        '<path d="M4 17a4 4 0 0 1 4-4h12M9 7h6"/>',
+        '<rect x="3" y="4" width="18" height="16" rx="2"/>'
+        '<path d="m7 9 3 3-3 3m6 0h4"/>',
+        '<path d="M4 4v16h17M8 15l4-5 4 2 4-7"/>',
+        '<path d="m5 19 4-1L20 7a2 2 0 0 0-4-4L5 14v5Zm9-14 4 4M4 22h17"/>',
+    )
     cards = "".join(
         _html(
             f"""
             <article class="oj-feature-card">
-              <span class="oj-feature-card__icon">{_safe(icon)}</span>
+              <span class="oj-feature-card__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  {drawings[index % len(drawings)]}
+                </svg>
+              </span>
               <h3>{_safe(title)}</h3><p>{_safe(description)}</p>
             </article>
             """
         )
-        for icon, title, description in items
+        for index, (_, title, description) in enumerate(items)
     )
     st.markdown(f'<div class="oj-feature-grid">{cards}</div>', unsafe_allow_html=True)
 
@@ -102,7 +119,7 @@ def feature_grid(items: list[tuple[str, str, str]]) -> None:
 def empty_state(message: str, *, icon: str = "📭") -> None:
     st.markdown(
         '<div class="oj-empty">'
-        f'<span class="oj-empty__icon">{_safe(icon)}</span>{_safe(message)}'
+        f'{_safe(message)}'
         "</div>",
         unsafe_allow_html=True,
     )

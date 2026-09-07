@@ -7,17 +7,43 @@ from typing import Any
 
 import streamlit as st
 
-from frontend.components.ui import section_header
+from frontend.components.ui import page_header, section_header
+
+
+@contextmanager
+def page_heading(title: str, subtitle: str, *, key: str) -> Iterator[None]:
+    """Keep the heading and its native action controls in a single layout group."""
+    with st.container(key=f"oj_page_heading_{key}"):
+        heading, actions = st.columns([3, 2], vertical_alignment="center")
+        with heading:
+            page_header(title, subtitle)
+        with actions, st.container(horizontal=True, horizontal_alignment="right"):
+            yield
+
+
+@contextmanager
+def form_row(key: str, widths: Sequence[float] = (1, 1)) -> Iterator[list[Any]]:
+    """Pair short fields without introducing another form or changing callbacks."""
+    with st.container(key=f"oj_form_row_{key}"):
+        yield st.columns(widths, gap="medium")
+
+
+@contextmanager
+def split_view(key: str, widths: Sequence[float] = (2, 1)) -> Iterator[list[Any]]:
+    """A native column group that stacks at the workspace's wide breakpoint."""
+    with st.container(key=f"oj_split_{key}"):
+        yield st.columns(widths, gap="large")
 
 
 @contextmanager
 def section_card(
-    title: str, *, key: str, icon: str = "✦", tone: str = "default"
+    title: str, *, key: str, icon: str = "✦", tone: str = "default", stretch: bool = False
 ) -> Iterator[None]:
     """Group widgets without creating a form or changing their state lifecycle."""
-    with st.container(key=f"oj_panel_{tone}_{key}"):
-        with st.container(key=f"oj_panel_heading_{key}"):
-            section_header(title, icon=icon)
+    with st.container(key=f"oj_panel_{tone}_{key}", height="stretch" if stretch else "content"):
+        if title:
+            with st.container(key=f"oj_panel_heading_{key}"):
+                section_header(title, icon=icon)
         with st.container(key=f"oj_panel_body_{key}"):
             yield
 

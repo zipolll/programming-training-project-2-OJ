@@ -26,12 +26,12 @@ export default function(component) {
         if (update.docChanged) save(update.state.doc.toString());
       }),
       EditorView.theme({
-        "&": {backgroundColor: "#ffffff", color: "#17243b", fontSize: "16px"},
-        ".cm-scroller": {overflow: "visible", fontFamily: "Consolas, monospace"},
-        ".cm-content": {minHeight: "240px", padding: "12px 0", caretColor: "#2563eb"},
-        ".cm-gutters": {backgroundColor: "#f2f5fc", color: "#66758b", border: "none"},
-        ".cm-activeLine": {backgroundColor: "#eef4ff"},
-        "&.cm-focused": {outline: "2px solid #818cf8", outlineOffset: "2px"}
+        "&": {backgroundColor: "#ffffff", color: "#203449", fontSize: "16px"},
+        ".cm-scroller": {overflow: "auto", fontFamily: '"Cascadia Code", Consolas, monospace', lineHeight: "1.7"},
+        ".cm-content": {minHeight: "320px", padding: "16px 0", caretColor: "#087e96"},
+        ".cm-gutters": {backgroundColor: "#f3f6f8", color: "#607284", borderRight: "1px solid #dce4ea"},
+        ".cm-activeLine, .cm-activeLineGutter": {backgroundColor: "#eaf4f6"},
+        "&.cm-focused": {outline: "2px solid #087e96", outlineOffset: "-2px"}
       })
     ]})
   });

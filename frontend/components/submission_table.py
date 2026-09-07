@@ -30,10 +30,14 @@ def render_submission_table(
     *,
     key: str,
     on_select: Callable[[str], None] | None = None,
+    compact: bool = False,
 ) -> None:
     """Render a compact result table; IDs become links when a callback is supplied."""
     labels = ("提交编号", "评测结果", "得分", "总分")
     widths = (1.2, 2.1, 1, 1)
+    if compact:
+        labels = ("提交编号", "评测结果", "得分 / 总分")
+        widths = (.65, 2, 1.2)
     with data_table(labels, widths, key=f"submissions_{key}"):
         for item in submissions:
             submission_id = str(item["submission_id"])
@@ -54,9 +58,12 @@ def render_submission_table(
                     badges([(label, tone)])
                 with row[2]:
                     cell_text(
-                        item.get("score"),
+                        (f"{item['score'] if item.get('score') is not None else '—'} / "
+                         f"{item['counts'] if item.get('counts') is not None else '—'}"
+                         if compact else item.get("score")),
                         emphasis=True,
                         tone="success" if tone == "green" else "failure",
                     )
-                with row[3]:
-                    cell_text(item.get("counts"), emphasis=True)
+                if not compact:
+                    with row[3]:
+                        cell_text(item.get("counts"), emphasis=True)

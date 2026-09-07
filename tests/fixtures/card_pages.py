@@ -2,11 +2,13 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import streamlit as st
 
+from frontend import app as frontend_app
 from frontend.components.theme import apply_theme
 from frontend.navigation import restore_widget, save_widgets
 from frontend.pages import agent, audit, auth, languages, problem_banks, problems, submissions
@@ -18,6 +20,9 @@ st.set_page_config(layout="wide")
 st.navigation([st.Page(lambda: None, title="预览", default=True)]).run()
 apply_theme()
 api = PreviewApi()
+st.session_state["fixture_rich"] = st.query_params.get("rich") == "1"
+if st.session_state["fixture_rich"]:
+    api.base_url += "/rich"
 user = {"id": 1, "role": "admin"}
 st.session_state["auth_user"] = user
 pages = [
@@ -34,6 +39,11 @@ pages = [
     "语言注册",
     "代码提交",
     "题目内提交",
+    "首页",
+    "登录",
+    "注册",
+    "个人信息",
+    "管理员信息",
 ]
 if "fixture_page" in st.query_params:
     restore_widget("fixture_page", "我的题库", options=pages)
@@ -66,5 +76,15 @@ elif page == "语言注册":
     languages.render_language_registration(api)
 elif page == "代码提交":
     submissions.render_submit(api)
+elif page == "首页":
+    with patch.object(frontend_app, "get_api_client", return_value=api):
+        frontend_app.render_home()
+elif page == "登录":
+    auth.render_login(api)
+elif page == "注册":
+    auth.render_register(api)
+elif page in {"个人信息", "管理员信息"}:
+    user["role"] = "user" if page == "个人信息" else "admin"
+    auth.render_profile(api, user)
 else:
     problems._render_problem_submission_tools(api, PROBLEM, user)

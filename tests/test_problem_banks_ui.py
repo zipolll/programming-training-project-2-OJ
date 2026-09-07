@@ -126,7 +126,7 @@ def test_create_draft_add_page_preserves_metadata_and_selection(ui):
     assert "bank_view" not in app.query_params
     assert not app.checkbox
     assert not any(b.label in {"增加题目", "移出题库", "移动到其他题库"} for b in app.button)
-    assert any("题库描述" in m.value for m in app.markdown)
+    assert any("本周练习" in m.value for m in app.markdown)
 
 
 def test_edit_add_remove_and_delete_are_separate_from_browsing(ui):

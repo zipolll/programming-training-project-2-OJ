@@ -349,14 +349,12 @@ def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
     assert 'section_header("新建普通题目"' in content
     assert 'options = ["新增", "编辑", "删除"]' not in content
     assert "我确认永久删除该题目。" in content
-    statement_position = content.index(
-        'with st.container(border=True, key="problem_statement")'
-    )
-    metadata_position = content.index('with st.container(key="problem_metadata")')
+    statement_position = content.index('st.container(border=False, key="problem_statement")')
+    metadata_position = content.index('st.container(key="oj_problem_facts")')
     description_position = content.index(
         'section_header("题目描述", icon="📖")', metadata_position
     )
-    assert statement_position < metadata_position < description_position
+    assert metadata_position < statement_position < description_position
 
 
 @pytest.mark.parametrize(
@@ -1021,7 +1019,12 @@ def test_admin_profile_uses_admin_identity_header(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(auth_page, "badges", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page, "info_card", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(auth_page.st, "columns", lambda count: [Column() for _ in range(count)])
+    monkeypatch.setattr(
+        auth_page.st, "columns",
+        lambda spec, **_kwargs: [
+            Column() for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+    )
 
     auth_page.render_profile(StubApi(), {"id": 1, "role": "admin"})
 
@@ -1050,13 +1053,13 @@ def test_submission_state_and_accessible_labels() -> None:
 
 def test_visual_theme_has_required_tokens_and_accessibility_rules() -> None:
     normalized = GLOBAL_CSS.lower()
-    assert "#5b5cf0" in normalized
-    assert "#06b6d4" in normalized
-    assert "#f97316" in normalized
+    assert "#087e96" in normalized
+    assert "#203449" in normalized
+    assert "#f3f6f8" in normalized
     assert "pingfang sc" in normalized
     assert "prefers-reduced-motion" in normalized
     assert "focus-visible" in normalized
-    assert "max-width: 600px" in normalized
+    assert "max-width: 700px" in normalized
     assert ".oj-section-title h2" in normalized
     assert "padding: 0 !important" in normalized
     assert "align-items: center" in normalized
@@ -1066,7 +1069,7 @@ def test_visual_theme_has_required_tokens_and_accessibility_rules() -> None:
     assert "border-left: 4px solid var(--oj-primary)" not in normalized
     assert '[data-testid="stheaderactionelements"]' in normalized
     assert "input::placeholder" in normalized
-    assert "font-style: italic" in normalized
+    assert "linear-gradient" not in normalized
     assert 'button[data-testid="stbasebutton-primary"]' in normalized
     assert '[data-testid="stsegmentedcontrol"] button[aria-pressed="true"]' in normalized
 

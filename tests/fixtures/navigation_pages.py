@@ -16,7 +16,13 @@ from frontend.pages import problem_banks, problems, submissions
 st.set_page_config(layout="wide")
 apply_theme()
 api = PreviewApi()
-user = {"id": 1, "role": "admin"}
+st.session_state["fixture_rich"] = st.query_params.get("rich") == "1"
+if st.session_state["fixture_rich"]:
+    api.base_url += "/rich"
+st.session_state["fixture_role"] = st.query_params.get(
+    "fixture_role", st.session_state.get("fixture_role", "admin")
+)
+user = {"id": 1, "role": st.session_state["fixture_role"]}
 st.session_state["auth_user"] = user
 catalogue = st.Page(lambda: problems.render_problem_list(api, user),
                     title="题目列表", default=True)

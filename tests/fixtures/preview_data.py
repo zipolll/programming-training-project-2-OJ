@@ -25,9 +25,22 @@ PROBLEM = {
 class PreviewApi:
     base_url = "http://offline-ui-fixture"
 
+    def get_health(self):
+        return self.get("/health")
+
     def get(self, path, params=None):
         st.session_state["fixture_last_get"] = (path, params)
-        if path.startswith("/problem-banks/"):
+        if path == "/health":
+            data = {"status": "ok"}
+        elif path.startswith("/users/") and path != "/users/":
+            data = {
+                "username": "训练者",
+                "role": st.session_state["auth_user"]["role"],
+                "join_time": "2026-09-02",
+                "submit_count": 12,
+                "resolve_count": 5,
+            }
+        elif path.startswith("/problem-banks/"):
             banks = [
                 {
                     "id": 1,
@@ -44,6 +57,27 @@ class PreviewApi:
                     "problems": [],
                 },
             ]
+            if st.session_state.get("fixture_rich"):
+                banks.extend(
+                    {
+                        "id": index,
+                        "name": name,
+                        "description": description,
+                        "problem_count": count,
+                        "problems": [PROBLEM] if count else [],
+                    }
+                    for index, name, description, count in (
+                        (3, "字符串与模式匹配", "从字符统计到模式匹配，集中练习字符串处理。", 12),
+                        (
+                            4,
+                            "图论与动态规划专题复习题库",
+                            "这里收录需要反复理解的状态转移、最短路径和图遍历题目。描述可以比较长，列表中保持两行，进入题库后可以阅读全部内容。",
+                            24,
+                        ),
+                        (5, "考前回顾", "重新梳理边界条件与复杂度分析。", 8),
+                        (6, "待整理", "", 0),
+                    )
+                )
             data = banks if path == "/problem-banks/" else banks[int(path.rsplit("/", 1)[1]) - 1]
         elif path == "/problems/":
             data = [PROBLEM, {**PROBLEM, "id": "sum", "title": "两数之和", "tags": []}]
@@ -136,6 +170,61 @@ class PreviewApi:
             data = []
         else:
             raise AssertionError(f"Unexpected fixture request: {path}")
+        if st.session_state.get("fixture_rich"):
+            if path == "/problems/":
+                data = [
+                    *data,
+                    *[
+                        {**PROBLEM, "id": pid, "title": title, "tags": tags, "difficulty": level}
+                        for pid, title, tags, level in (
+                            ("brackets", "括号的秩序", ["栈", "字符串"], "中等"),
+                            (
+                                "hanoi_kth_move",
+                                "汉诺塔的第 k 步",
+                                ["recursion", "divide_and_conquer", "math"],
+                                "简单",
+                            ),
+                            ("prefix_sum", "区间求和", ["前缀和", "数组"], "入门"),
+                            (
+                                "long_problem_identifier_for_responsive_layout_2026",
+                                "带有较长标题的最短路径与状态压缩综合训练题目",
+                                ["图论", "最短路径", "状态压缩动态规划"],
+                                "困难",
+                            ),
+                        )
+                    ],
+                ]
+            elif path.startswith("/problems/"):
+                data = {
+                    **data,
+                    "description": (
+                        "给定一组用户搜索词，请统计每个词语出现的次数，"
+                        "并按出现次数从高到低输出排行榜。\n\n"
+                        "如果两个词语出现次数相同，则按照字典序排列。"
+                        "你需要选择合适的数据结构，在给定的时间与内存限制内处理全部输入。"
+                    ),
+                    "input_description": (
+                        "第一行是整数 n，表示搜索词的数量。"
+                        "接下来 n 行，每行包含一个仅由小写英文字母组成的词语。"
+                    ),
+                    "output_description": (
+                        "按要求输出排行榜，每行包含一个词语和它的出现次数，中间以空格分隔。"
+                    ),
+                    "samples": [
+                        {
+                            "input": "5\napple\npear\napple\nbanana\npear",
+                            "output": "apple 2\npear 2\nbanana 1",
+                        }
+                    ],
+                }
+                if path.endswith("long_problem_identifier_for_responsive_layout_2026"):
+                    data = {
+                        **data,
+                        "id": path.rsplit("/", 1)[1],
+                        "title": "带有较长标题的最短路径与状态压缩综合训练题目",
+                    }
+        if path == "/problem-banks/" and st.query_params.get("fixture_banks") == "empty":
+            data = []
         return {"data": data}
 
     def post(self, path, json=None):

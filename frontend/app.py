@@ -5,6 +5,7 @@ from collections.abc import Callable
 import streamlit as st
 
 from frontend.components.common import show_error
+from frontend.components.layout import split_view
 from frontend.components.theme import apply_theme
 from frontend.components.ui import badges, feature_grid, page_header, section_header
 from frontend.data_access import load_service_status
@@ -34,29 +35,31 @@ from frontend.session import (
 
 
 def render_home() -> None:
-    page_header(
-        "Programming Training OJ",
-        "从题目阅读、代码提交到智能命题，一站式完成你的算法训练挑战。",
-        icon="🏁",
-        eyebrow="READY · CODE · ACCEPT",
-    )
-    badges([("Python / C++", "cyan"), ("异步评测", "orange"), ("AI 智能命题", "green")])
+    with split_view("home", (2, 1)) as workspace:
+        with workspace[0], st.container(key="oj_home_intro"):
+            page_header(
+                "Programming Training OJ",
+                "阅读题目，编写解法，查看评测结果。在这里继续你的编程训练。",
+                variant="home",
+            )
+            badges([("Python / C++", "cyan"), ("异步评测", "orange"), ("AI 智能命题", "green")])
+        with workspace[1], st.container(key="oj_home_status"):
+            section_header("服务状态")
+            api = get_api_client()
+            try:
+                status = load_service_status(api.base_url, api)
+            except Exception as exc:
+                show_error(exc)
+            else:
+                st.success("系统运行正常。" if status == "ok" else f"系统状态：{status}")
     feature_grid(
         [
-            ("📚", "题库训练", "查看题面、样例和约束，快速进入解题状态。"),
-            ("⚡", "在线评测", "提交代码并实时获取编译、运行和得分结果。"),
-            ("📈", "成长记录", "筛选提交历史，追踪每一次挑战和突破。"),
-            ("✨", "智能命题", "通过受控 AI 工作流生成、验证并导入新题目。"),
+            ("📚", "从一道题开始", "阅读题面、样例与约束，用个人题库整理练习。"),
+            ("⚡", "编写与评测", "选择语言，提交代码，查看编译、运行和得分结果。"),
+            ("📈", "回顾提交记录", "按题目和状态查找历史提交，检查结果与评测日志。"),
+            ("✨", "准备下一道题", "创建题目，或使用 AI 命题生成、验证并导入新题目。"),
         ]
     )
-    section_header("服务状态", icon="🛰️")
-    api = get_api_client()
-    try:
-        status = load_service_status(api.base_url, api)
-    except Exception as exc:
-        show_error(exc)
-    else:
-        st.success("系统运行正常。" if status == "ok" else f"系统状态：{status}")
 
 
 def _page(

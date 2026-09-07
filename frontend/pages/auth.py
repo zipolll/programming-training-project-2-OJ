@@ -6,7 +6,14 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import REQUIRED_PLACEHOLDER, show_error
-from frontend.components.layout import cell_text, data_table, section_card, table_row
+from frontend.components.layout import (
+    cell_text,
+    data_table,
+    form_row,
+    section_card,
+    split_view,
+    table_row,
+)
 from frontend.components.pagination import pagination_values, render_pagination
 from frontend.components.ui import badges, info_card, list_count, page_header, section_header
 from frontend.errors import ApiError
@@ -28,7 +35,7 @@ def render_register(api: ApiClient, on_success: Callable[[], None] | None = None
         eyebrow="NEW CHALLENGER",
     )
     section_header("账户信息", icon="🪪")
-    with st.form("register_form"):
+    with st.form("register_form", width=480):
         username = st.text_input(
             "用户名", placeholder=REQUIRED_PLACEHOLDER, help="3–40 个字符"
         )
@@ -78,7 +85,7 @@ def render_login(api: ApiClient, on_success: Callable[[], None] | None = None) -
         eyebrow="PLAYER SIGN IN",
     )
     section_header("登录信息", icon="👤")
-    with st.form("login_form"):
+    with st.form("login_form", width=480):
         username = st.text_input("用户名", placeholder=REQUIRED_PLACEHOLDER)
         password = st.text_input(
             "密码", type="password", placeholder=REQUIRED_PLACEHOLDER
@@ -162,15 +169,14 @@ def render_profile(api: ApiClient, user: dict[str, object]) -> None:
         badges([("管理员", "orange"), ("平台管理权限", "cyan")])
     else:
         badges([("普通用户", "cyan")])
-    identity, joined = st.columns(2)
-    with identity:
-        info_card("用户名", data.get("username", "—"), icon="👤")
-    with joined:
-        info_card("加入时间", data.get("join_time", "—"), icon="📅")
-    section_header("训练统计", icon="📊")
-    submitted, resolved = st.columns(2)
-    submitted.metric("累计提交", data.get("submit_count", 0))
-    resolved.metric("通过题目", data.get("resolve_count", 0))
+    with split_view("profile", (2, 3)) as workspace:
+        with workspace[0], section_card("账户信息", key="profile_identity", stretch=True):
+            info_card("用户名", data.get("username", "—"), icon="👤")
+            info_card("加入时间", data.get("join_time", "—"), icon="📅")
+        with workspace[1], section_card("训练统计", key="profile_stats", stretch=True):
+            submitted, resolved = st.columns(2)
+            submitted.metric("累计提交", data.get("submit_count", 0))
+            resolved.metric("通过题目", data.get("resolve_count", 0))
 
 
 def render_user_admin(api: ApiClient) -> None:
@@ -229,12 +235,12 @@ def render_user_admin(api: ApiClient) -> None:
 
     render_pagination("user_admin", total=total)
     with section_card("角色调整", key="user_role", icon="⚠️", tone="warning"):
-        target = st.selectbox(
-            "选择用户",
-            users,
-            format_func=lambda item: f"{item['username']}（{item['role']}）",
-        )
-        role = st.selectbox("新角色", ["user", "admin", "banned"])
+        with form_row("user_role", (2, 1)) as fields:
+            target = fields[0].selectbox(
+                "选择用户", users,
+                format_func=lambda item: f"{item['username']}（{item['role']}）",
+            )
+            role = fields[1].selectbox("新角色", ["user", "admin", "banned"])
         confirmed = st.checkbox("我确认修改该用户角色；封禁后该账号将立即退出登录。")
         if st.button("修改角色", disabled=not confirmed, type="primary"):
             try:

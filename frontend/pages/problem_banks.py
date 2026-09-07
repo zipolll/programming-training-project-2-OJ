@@ -3,7 +3,7 @@
 import streamlit as st
 
 from frontend.components.common import show_error
-from frontend.components.layout import section_card
+from frontend.components.layout import page_heading, section_card
 from frontend.components.ui import badges, empty_state, list_count, page_header
 from frontend.navigation import navigate_page, update_route
 from frontend.pages.problems import (
@@ -52,6 +52,7 @@ def render_metadata(bank: dict | None) -> dict:
             "题库名称",
             value=draft["name"],
             max_chars=40,
+            width=480,
             key=f"{key}_widget_name",
             on_change=remember,
             args=("name",),
@@ -60,7 +61,7 @@ def render_metadata(bank: dict | None) -> dict:
             "题库描述",
             value=draft["description"],
             max_chars=200,
-            height=150,
+            height=100,
             key=f"{key}_widget_description",
             on_change=remember,
             args=("description",),
@@ -228,18 +229,18 @@ def render_problem_banks(api, user: dict) -> None:
         return
     if bank:
         st.button("← 返回我的题库", on_click=open_bank, args=(None,))
-        page_header(bank["name"], "按自己的学习安排练习题目。", icon="📚")
-        with section_card("题库描述", key=f"bank_description_{bank['id']}", icon="📖"):
-            st.text(bank["description"] or "还没有题库简介")
-        render_problem_catalogue(api, bank["problems"], key=f"bank_{bank['id']}")
-        st.divider()
-        with st.container(horizontal=True):
+        with page_heading(
+            bank["name"], bank["description"] or "还没有题库简介", key="bank_detail",
+        ), st.popover("更多", icon=":material/more_horiz:"):
             st.button("编辑题库", on_click=open_bank, args=(bank["id"], "edit"), key="bank_edit")
             st.button(
                 "删除题库", on_click=open_bank, args=(bank["id"], "delete"), key="bank_delete"
             )
+        render_problem_catalogue(api, bank["problems"], key=f"bank_{bank['id']}")
         return
-    page_header("我的题库", "点击题库名称，开始练习。", icon="📚")
+    with page_heading("我的题库", "整理题目，按自己的节奏练习。", key="banks"):
+        st.button("创建题库", icon=":material/add:", on_click=start_creation,
+                  key="bank_create", type="primary")
     try:
         banks = api.get("/problem-banks/")["data"]
     except Exception as exc:
@@ -247,18 +248,14 @@ def render_problem_banks(api, user: dict) -> None:
         return
     list_count(len(banks))
     if not banks:
-        empty_state("你还没有题库，点击下方创建题库。", icon="📚")
-    for item in banks:
-        with st.container(key=f"bank_link_card_{item['id']}"):
-            st.button(
-                item["name"],
-                type="tertiary",
-                key=f"bank_open_{item['id']}",
-                on_click=open_bank,
-                args=(item["id"],),
-            )
-            st.caption(item["description"] or "还没有题库简介")
-            badges([(f"📚 已收录 {item['problem_count']} 道题", "blue")])
-            if not item["problem_count"]:
-                st.caption("尚未收录题目，添加题目开始练习。")
-    st.button("创建题库", icon=":material/add:", on_click=start_creation, key="bank_create")
+        empty_state("你还没有题库，点击页头的“创建题库”开始整理。", icon="📚")
+    with st.container(key="oj_bank_grid"):
+        for item in banks:
+            with st.container(key=f"bank_link_card_{item['id']}"):
+                st.button(
+                    item["name"], type="tertiary", key=f"bank_open_{item['id']}",
+                    on_click=open_bank, args=(item["id"],),
+                )
+                with st.container(key=f"oj_bank_description_{item['id']}"):
+                    st.caption(item["description"] or "还没有题库简介")
+                badges([(f"已收录 {item['problem_count']} 道题", "cyan")])

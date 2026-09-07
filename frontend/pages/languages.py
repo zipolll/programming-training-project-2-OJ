@@ -6,7 +6,7 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
-from frontend.components.layout import section_card
+from frontend.components.layout import form_row, section_card
 from frontend.components.ui import badges, list_count, page_header
 from frontend.data_access import invalidate_language_cache, load_language_names
 
@@ -43,8 +43,9 @@ def render_language_registration(api: ApiClient) -> None:
 
     with st.form("language_registration_form"):
         with section_card("语言与执行命令", key="language_commands", icon="🧰"):
-            name = st.text_input("语言名称", placeholder="必填，如 java")
-            file_ext = st.text_input("源文件扩展名", placeholder="必填，如 .java")
+            with form_row("language_identity") as fields:
+                name = fields[0].text_input("语言名称", placeholder="必填，如 java")
+                file_ext = fields[1].text_input("源文件扩展名", placeholder="必填，如 .java")
             compile_cmd = st.text_input(
                 "编译命令",
                 placeholder=OPTIONAL_PLACEHOLDER,

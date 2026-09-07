@@ -25,13 +25,14 @@ def _component():
              '<button type="button">提交评测</button>',
         css="""
         :host { color-scheme: light; display: block; min-width: 0; }
-        .oj-editor { border: 1px solid #dbe3f2; border-radius: 12px; overflow: hidden; }
+        .oj-editor { border: 1px solid #8193a3; border-radius: 10px; overflow: hidden; }
         button { padding: 12px 24px; border: 0; border-radius: 10px; color: white;
-          background: linear-gradient(120deg,#5654ef,#7c3aed); cursor: pointer;
-          font: 600 16px system-ui; min-height: 44px; }
-        button:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 3px; }
+          background: #087e96; cursor: pointer;
+          font: 600 16px "PingFang SC", "Microsoft YaHei", sans-serif; min-height: 44px; }
+        button:hover { background: #066579; }
+        button:focus-visible { outline: 2px solid #087e96; outline-offset: 3px; }
         button:disabled { opacity: .65; cursor: wait; }
-        [role=status] { color: #b91c1c; font: 14px system-ui; }
+        [role=status] { color: #c13c45; font: 14px "Microsoft YaHei", sans-serif; }
         """,
         js=Path(__file__).with_name("editor").joinpath("editor.bundle.js").read_text("utf-8"),
     )
@@ -42,7 +43,7 @@ def render_code_submission(api, problem_id: str, languages: list[str], *, key: s
     if error:
         show_error(RuntimeError(error))
     restore_widget(f"{key}_language", languages[0], options=languages)
-    language = st.selectbox("语言", languages, key=f"{key}_language",
+    language = st.selectbox("语言", languages, key=f"{key}_language", width=300,
                            on_change=save_widgets, args=(f"{key}_language",))
     user = current_user() or {}
     generation_key = f"{key}_editor_generation"

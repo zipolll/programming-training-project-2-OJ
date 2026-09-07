@@ -8,7 +8,7 @@ import streamlit as st
 
 from frontend.api_client import ApiClient
 from frontend.components.common import OPTIONAL_PLACEHOLDER, REQUIRED_PLACEHOLDER, show_error
-from frontend.components.layout import section_card
+from frontend.components.layout import form_row, section_card
 from frontend.components.ui import (
     badges,
     empty_state,
@@ -131,19 +131,19 @@ def _config(api: ApiClient) -> None:
     badges(config_badges)
     with st.form("agent-config"):
         with section_card("模型连接", key="agent_connection", icon="🔌"):
-            provider_url = st.text_input(
-                "Provider URL",
-                current.get("provider_url", ""),
-                placeholder=REQUIRED_PLACEHOLDER,
-            )
-            model_name = st.text_input(
-                "模型名称", current.get("model_name", ""), placeholder=REQUIRED_PLACEHOLDER
-            )
+            with form_row("agent_connection", (2, 1)) as fields:
+                provider_url = fields[0].text_input(
+                    "Provider URL", current.get("provider_url", ""),
+                    placeholder=REQUIRED_PLACEHOLDER,
+                )
+                model_name = fields[1].text_input(
+                    "模型名称", current.get("model_name", ""), placeholder=REQUIRED_PLACEHOLDER
+                )
             api_key = st.text_input(
                 "API Key（留空则保留）", type="password", placeholder=OPTIONAL_PLACEHOLDER
             )
         with section_card("Token 价格", key="agent_prices", icon="💳"):
-            left, right = st.columns(2)
+            left, right, currency_column = st.columns(3)
             input_price = left.number_input(
                 "输入价格 / 百万 Token",
                 min_value=0.0,
@@ -158,7 +158,7 @@ def _config(api: ApiClient) -> None:
             currency_options = list(COMMON_CURRENCIES)
             if current_currency not in currency_options:
                 currency_options.append(current_currency)
-            currency = st.selectbox(
+            currency = currency_column.selectbox(
                 "币种",
                 currency_options,
                 index=currency_options.index(current_currency),
@@ -166,13 +166,14 @@ def _config(api: ApiClient) -> None:
                 help="可从列表选择，也可以直接输入其他币种代码。",
             )
         with section_card("执行策略", key="agent_policy", icon="⚙️"):
-            timeout = st.number_input(
+            policy_fields = st.columns(3)
+            timeout = policy_fields[0].number_input(
                 "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 360.0))
             )
-            iterations = st.number_input(
+            iterations = policy_fields[1].number_input(
                 "最大修正轮数", 1, 10, int(current.get("max_iterations", 3))
             )
-            max_tokens = st.number_input(
+            max_tokens = policy_fields[2].number_input(
                 "单次最大输出 Token",
                 256,
                 128000,

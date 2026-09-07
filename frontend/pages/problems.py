@@ -12,7 +12,14 @@ from frontend.components.common import (
     REQUIRED_PLACEHOLDER,
     show_error,
 )
-from frontend.components.layout import cell_text, data_table, section_card, table_row
+from frontend.components.layout import (
+    cell_text,
+    data_table,
+    form_row,
+    section_card,
+    split_view,
+    table_row,
+)
 from frontend.components.pagination import pagination_values, render_pagination
 from frontend.components.submission_table import render_submission_table
 from frontend.components.ui import (
@@ -164,36 +171,39 @@ def _render_problem_submission_tools(
     except Exception as exc:
         show_error(exc)
         languages = []
-    if languages:
-        with section_card("代码与运行环境", key=f"submit_{problem['id']}", icon="💻"):
-            render_code_submission(
-                api, str(problem["id"]), languages, key=f"submit_{problem['id']}",
-            )
-
-    section_header("我的递交历史", icon="📜")
-    try:
-        history = api.get(
-            "/submissions/",
-            params={
-                "user_id": int(user["id"]),
-                "problem_id": problem["id"],
-                "page": 1,
-                "page_size": 5,
-            },
-        )["data"]
-    except Exception as exc:
-        show_error(exc)
-        return
-    submissions = history.get("submissions", [])
-    list_count(int(history.get("total", len(submissions))))
-    if submissions:
-        render_submission_table(
-            submissions,
-            key=f"problem_{problem['id']}",
-            on_select=open_submission,
-        )
-    else:
-        empty_state("你还没有提交过这道题。", icon="📭")
+    with split_view("submission_workspace", (2, 1)) as workspace:
+        with workspace[0]:
+            if languages:
+                with section_card("代码与运行环境", key=f"submit_{problem['id']}", icon="💻"):
+                    render_code_submission(
+                        api, str(problem["id"]), languages, key=f"submit_{problem['id']}",
+                    )
+        with workspace[1], st.container(key="oj_recent_submissions"):
+            section_header("我的递交历史", icon="📜")
+            try:
+                history = api.get(
+                    "/submissions/",
+                    params={
+                        "user_id": int(user["id"]),
+                        "problem_id": problem["id"],
+                        "page": 1,
+                        "page_size": 5,
+                    },
+                )["data"]
+            except Exception as exc:
+                show_error(exc)
+                return
+            submissions = history.get("submissions", [])
+            list_count(int(history.get("total", len(submissions))))
+            if submissions:
+                render_submission_table(
+                    submissions,
+                    key=f"problem_{problem['id']}",
+                    on_select=open_submission,
+                    compact=True,
+                )
+            else:
+                empty_state("你还没有提交过这道题。", icon="📭")
 
 
 def render_problem_detail(
@@ -267,61 +277,65 @@ def render_problem_detail(
             return
 
     st.button(back_label, on_click=_close_problem)
-    subtitle = " · ".join(
-        value
-        for value in (problem.get("source"), problem.get("author"))
-        if value
-    )
-    page_header(
-        problem["title"],
-        subtitle or "阅读题目要求，设计并提交你的解法。",
-        icon="🎯",
-        eyebrow=f"PROBLEM {problem['id']}",
-    )
     actions = problem_detail_actions(role)
-    if actions:
-        from frontend.components.bank_controls import render_add_to_bank
-
-        with st.container(horizontal=True, key="problem_detail_actions"):
-            st.button(
-                "去提交", type="primary", on_click=_select_detail_action, args=("提交",),
-            )
-            st.button("编辑题目", on_click=_select_detail_action, args=("编辑",))
-            if "删除" in actions:
-                st.button("删除题目", on_click=_select_detail_action, args=("删除",))
-            render_add_to_bank(api, str(problem["id"]))
-
-    time_col, memory_col = st.columns(2)
-    with time_col:
-        info_card("时间限制", f"{problem['time_limit']} 秒", icon="⏱️")
-    with memory_col:
-        info_card("内存限制", f"{problem['memory_limit']} MB", icon="💾")
-
-    with st.container(border=True, key="problem_statement"):
-        metadata = problem_metadata_items(problem)
-        if metadata:
-            with st.container(key="problem_metadata"):
+    page_header(problem["title"], "阅读题目要求，设计并提交你的解法。")
+    with st.container(key="oj_problem_reading"):
+        with st.container(key="oj_problem_facts"):
+            with st.container(key="oj_problem_summary"):
+                summary = st.columns(4, gap="medium")
+                for column, label, value in zip(
+                    summary,
+                    ("题号", "难度", "时间限制", "内存限制"),
+                    (problem["id"], problem.get("difficulty") or "—",
+                     f"{problem['time_limit']} 秒", f"{problem['memory_limit']} MB"),
+                    strict=True,
+                ):
+                    with column:
+                        info_card(label, value)
+            with st.container(key="oj_problem_credits"):
+                source, author = st.columns(2, gap="medium")
+                with source:
+                    info_card("来源", problem.get("source") or "—")
+                with author:
+                    info_card("作者", problem.get("author") or "—")
+            metadata = problem_metadata_items({**problem, "difficulty": ""})
+            if metadata:
                 badges(metadata)
-        section_header("题目描述", icon="📖")
-        st.markdown(problem["description"])
-        section_header("输入说明", icon="📥")
-        st.markdown(problem["input_description"])
-        section_header("输出说明", icon="📤")
-        st.markdown(problem["output_description"])
-        section_header("约束", icon="📐")
-        st.markdown(problem["constraints"])
+            if actions:
+                from frontend.components.bank_controls import render_add_to_bank
 
-        section_header("样例", icon="🧪")
-        for index, sample in enumerate(problem["samples"], 1):
-            st.markdown(f"#### 样例 {index}")
-            left, right = st.columns(2)
-            left.caption("输入")
-            left.code(sample["input"], language=None)
-            right.caption("输出")
-            right.code(sample["output"], language=None)
-        if problem.get("hint"):
-            with st.expander("查看提示"):
-                st.markdown(problem["hint"])
+                with st.container(
+                    key="oj_problem_actions", horizontal=True, horizontal_alignment="right",
+                ):
+                    st.button(
+                        "去提交", type="primary", on_click=_select_detail_action, args=("提交",),
+                    )
+                    render_add_to_bank(api, str(problem["id"]))
+                    with st.popover("更多", icon=":material/more_horiz:"):
+                        st.button("编辑题目", on_click=_select_detail_action, args=("编辑",))
+                        if "删除" in actions:
+                            st.button("删除题目", on_click=_select_detail_action, args=("删除",))
+        with st.container(border=False, key="problem_statement"):
+            section_header("题目描述", icon="📖")
+            st.markdown(problem["description"])
+            section_header("输入说明", icon="📥")
+            st.markdown(problem["input_description"])
+            section_header("输出说明", icon="📤")
+            st.markdown(problem["output_description"])
+            section_header("约束", icon="📐")
+            st.markdown(problem["constraints"])
+
+            section_header("样例", icon="🧪")
+            for index, sample in enumerate(problem["samples"], 1):
+                st.markdown(f"#### 样例 {index}")
+                left, right = st.columns(2)
+                left.caption("输入")
+                left.code(sample["input"], language=None)
+                right.caption("输出")
+                right.code(sample["output"], language=None)
+            if problem.get("hint"):
+                with st.expander("查看提示"):
+                    st.markdown(problem["hint"])
 
 
 
@@ -373,13 +387,14 @@ def render_problem_catalogue(
 
     restore_widget(f"{key}_search")
 
-    with section_card("筛选题目", key=f"{key}_filters", icon="🔎", tone="toolbar"):
-        search_col, difficulty_col = st.columns([2, 1])
+    with section_card("", key=f"{key}_filters", tone="toolbar"):
+        search_col, difficulty_col = st.columns([4, 1])
         search = search_col.text_input(
             "关键词",
             placeholder="输入题号、名称、标签或来源",
             key=f"{key}_search",
             on_change=filters_changed,
+            label_visibility="collapsed",
         )
         available_difficulties = {
             str(item.get("difficulty")).strip()
@@ -399,6 +414,7 @@ def render_problem_catalogue(
             "难度", ["全部难度", *difficulties],
             key=f"{key}_difficulty",
             on_change=filters_changed,
+            label_visibility="collapsed",
         )
     filtered = filter_problem_summaries(
         problems,
@@ -420,8 +436,8 @@ def render_problem_catalogue(
     selection_key = (
         prepare_selection(key, (page, search, selected_difficulty), visible) if selectable else ""
     )
-    labels = ("题号", "题目名称", "题型", "标签", "难度")
-    widths = (1, 2.8, 1.5, 1.5, 1.2)
+    labels = ("题号", "题目", "难度")
+    widths = (1.2, 5, 1)
     if selectable:
         labels = ("选择", *labels)
         widths = (0.6, *widths)
@@ -448,16 +464,14 @@ def render_problem_catalogue(
                     disabled=not problem.get("available", True),
                     help=f"查看 {problem['title']} 的题目详情",
                 )
-                with row[2]:
-                    cell_text(problem.get("problem_type") or "—", tone="muted")
-                first_tag = first_problem_tag(problem)
-                with row[3]:
-                    if first_tag:
-                        badges([(first_tag, "cyan")])
-                    else:
-                        cell_text("—", tone="muted")
+                with row[1]:
+                    metadata = [str(problem.get("problem_type") or "").strip()]
+                    metadata.extend(str(tag).strip() for tag in problem.get("tags") or [])
+                    if any(metadata):
+                        with st.container(key=f"oj_catalogue_meta_{key}_{problem['id']}"):
+                            badges([(value, "gray") for value in dict.fromkeys(metadata) if value])
                 difficulty = str(problem.get("difficulty") or "").strip()
-                with row[4]:
+                with row[2]:
                     if difficulty:
                         badges([(difficulty, difficulty_tone(difficulty))])
                     else:
@@ -542,29 +556,39 @@ def _catalogue_select(
 def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any] | None:
     data = initial or {}
     with section_card("基本信息", key=f"{prefix}_basic", icon="🪪"):
-        problem_id = st.text_input(
-            "题目 ID",
-            data.get("id", ""),
-            disabled=initial is not None,
-            placeholder=REQUIRED_PLACEHOLDER,
-        )
-        title = st.text_input("标题", data.get("title", ""), placeholder=REQUIRED_PLACEHOLDER)
-        source = st.text_input("来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER)
-        author = st.text_input("作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER)
+        with form_row(f"{prefix}_identity") as fields:
+            problem_id = fields[0].text_input(
+                "题目 ID", data.get("id", ""), disabled=initial is not None,
+                placeholder=REQUIRED_PLACEHOLDER,
+            )
+            title = fields[1].text_input(
+                "标题", data.get("title", ""), placeholder=REQUIRED_PLACEHOLDER,
+            )
+        with form_row(f"{prefix}_credits") as fields:
+            source = fields[0].text_input(
+                "来源", data.get("source", ""), placeholder=OPTIONAL_PLACEHOLDER,
+            )
+            author = fields[1].text_input(
+                "作者", data.get("author", ""), placeholder=OPTIONAL_PLACEHOLDER,
+            )
     with section_card("题面内容", key=f"{prefix}_statement", icon="📖"):
         description = st.text_area(
             "题面", data.get("description", ""), height=160, placeholder=REQUIRED_PLACEHOLDER
         )
-        input_description = st.text_area(
-            "输入说明", data.get("input_description", ""), placeholder=REQUIRED_PLACEHOLDER
-        )
-        output_description = st.text_area(
-            "输出说明", data.get("output_description", ""), placeholder=REQUIRED_PLACEHOLDER
-        )
-        constraints = st.text_area(
-            "约束", data.get("constraints", ""), placeholder=REQUIRED_PLACEHOLDER
-        )
-        hint = st.text_area("提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER)
+        with form_row(f"{prefix}_io") as fields:
+            input_description = fields[0].text_area(
+                "输入说明", data.get("input_description", ""), placeholder=REQUIRED_PLACEHOLDER
+            )
+            output_description = fields[1].text_area(
+                "输出说明", data.get("output_description", ""), placeholder=REQUIRED_PLACEHOLDER
+            )
+        with form_row(f"{prefix}_guidance") as fields:
+            constraints = fields[0].text_area(
+                "约束", data.get("constraints", ""), placeholder=REQUIRED_PLACEHOLDER
+            )
+            hint = fields[1].text_area(
+                "提示", data.get("hint", ""), placeholder=OPTIONAL_PLACEHOLDER,
+            )
     with section_card("样例与测试点", key=f"{prefix}_cases", icon="🧪"):
         samples = _pairs_editor("样例", f"{prefix}_samples", data.get("samples", []))
         testcases = _pairs_editor("测试点", f"{prefix}_tests", data.get("testcases", []))
@@ -590,12 +614,13 @@ def _problem_form(initial: dict[str, Any] | None, prefix: str) -> dict[str, Any]
             placeholder=OPTIONAL_PLACEHOLDER,
             help="使用英文逗号分隔",
         )
-        time_limit = st.number_input(
-            "时间限制（秒）", min_value=0.01, value=float(data.get("time_limit", 3.0))
-        )
-        memory_limit = st.number_input(
-            "内存限制（MB）", min_value=1, value=int(data.get("memory_limit", 128))
-        )
+        with form_row(f"{prefix}_resources") as fields:
+            time_limit = fields[0].number_input(
+                "时间限制（秒）", min_value=0.01, value=float(data.get("time_limit", 3.0))
+            )
+            memory_limit = fields[1].number_input(
+                "内存限制（MB）", min_value=1, value=int(data.get("memory_limit", 128))
+            )
     if not st.button("保存题目", type="primary", key=f"{prefix}_save"):
         return None
     return build_problem_payload(

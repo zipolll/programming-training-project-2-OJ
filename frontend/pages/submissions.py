@@ -95,10 +95,11 @@ def _render_detail_data(data: dict[str, Any]) -> None:
         finished = "编译错误"
     elif status == "error":
         finished = "评测异常"
-    summary = st.columns(3)
-    summary[0].metric("评测状态", finished)
-    summary[1].metric("得分", data.get("score") if data.get("score") is not None else "—")
-    summary[2].metric("总分", data.get("counts") if data.get("counts") is not None else "—")
+    with st.container(key="oj_result_summary"):
+        summary = st.columns([2, 1, 1])
+        summary[0].metric("评测状态", finished)
+        summary[1].metric("得分", data.get("score") if data.get("score") is not None else "—")
+        summary[2].metric("总分", data.get("counts") if data.get("counts") is not None else "—")
     compile_info = data.get("compile_info")
     if compile_info:
         with st.expander("编译信息", expanded=compile_info.get("result") == "error"):
