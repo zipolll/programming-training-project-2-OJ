@@ -6,6 +6,33 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $backendProcess = $null
 $frontendProcess = $null
+$frontendLog = Join-Path $projectRoot "data\runtime\start-dev\frontend.log"
+$frontendErrorLog = Join-Path $projectRoot "data\runtime\start-dev\frontend-error.log"
+
+function Assert-PortAvailable {
+    param([int]$Port, [string]$Service)
+
+    $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    if ($listeners | Where-Object { $_.Port -eq $Port }) {
+        throw "$Service port $Port is already in use. Stop the existing service before running start_dev.ps1; no new services were started."
+    }
+}
+
+function Get-FrontendFailure {
+    param([System.Diagnostics.Process]$Process, [string]$OutputLog, [string]$ErrorLog)
+
+    $Process.Refresh()
+    $code = $Process.ExitCode
+    if ($null -eq $code) { $code = "unavailable" }
+    $details = @(
+        foreach ($log in @($OutputLog, $ErrorLog)) {
+            if (Test-Path -LiteralPath $log) {
+                Get-Content -LiteralPath $log -Tail 20
+            }
+        }
+    ) -join [Environment]::NewLine
+    return "Frontend exited (exit code $code). Logs: $OutputLog ; $ErrorLog`n$details"
+}
 
 function Stop-ProcessTree {
     param([System.Diagnostics.Process]$Process)
@@ -32,6 +59,10 @@ if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
 
 Push-Location $projectRoot
 try {
+    # An old service must not satisfy the health check for a newly spawned process.
+    Assert-PortAvailable -Port 8000 -Service "Backend"
+    Assert-PortAvailable -Port 8501 -Service "Frontend"
+
     Write-Host "Checking Python environment..."
     & $pythonPath -c "import fastapi, streamlit, uvicorn" 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -89,19 +120,28 @@ try {
     if ($NoReload) {
         $frontendArguments += @("--server.fileWatcherType", "none")
     }
+    else {
+        $frontendArguments += @("--server.fileWatcherType", "poll")
+    }
+    New-Item -ItemType Directory -Path (Split-Path $frontendLog) -Force | Out-Null
     Write-Host "Starting frontend at http://localhost:8501 ..."
     $frontendProcess = Start-Process `
         -FilePath $pythonPath `
         -ArgumentList $frontendArguments `
         -WorkingDirectory $projectRoot `
-        -NoNewWindow `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $frontendLog `
+        -RedirectStandardError $frontendErrorLog `
         -PassThru
+    # Keep a process handle open so Windows PowerShell can retrieve its exit code.
+    $null = $frontendProcess.Handle
+    Write-Host "Frontend logs: $frontendLog ; $frontendErrorLog"
 
     $frontendReady = $false
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         Start-Sleep -Milliseconds 500
         if ($frontendProcess.HasExited) {
-            throw "Frontend exited during startup (exit code $($frontendProcess.ExitCode))."
+            throw (Get-FrontendFailure $frontendProcess $frontendLog $frontendErrorLog)
         }
         try {
             $response = Invoke-WebRequest `
@@ -135,7 +175,7 @@ try {
         throw "Backend stopped unexpectedly (exit code $($backendProcess.ExitCode))."
     }
     if ($frontendProcess.HasExited) {
-        throw "Frontend stopped unexpectedly (exit code $($frontendProcess.ExitCode))."
+        throw (Get-FrontendFailure $frontendProcess $frontendLog $frontendErrorLog)
     }
 }
 finally {
