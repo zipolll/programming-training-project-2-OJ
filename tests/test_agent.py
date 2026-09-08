@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Iterator
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
+from streamlit.testing.v1 import AppTest
 
 from backend.app.core.config import Settings
 from backend.app.main import create_app
@@ -154,15 +156,352 @@ def test_minimal_authoring_request_allows_ai_selected_advanced_fields(
     assert request.testcase_count == 10
 
 
-def test_minimal_authoring_request_still_requires_core_knowledge() -> None:
+def test_partial_authoring_settings_allow_ai_selected_knowledge() -> None:
+    request = AuthoringRequest.model_validate({"difficulty": "中等"})
+    assert request.required_knowledge == []
+    assert request.model_dump(exclude_unset=True) == {"difficulty": "中等"}
+
+
+@pytest.mark.parametrize("payload", [{}, {"prompt": "  "}, {"required_knowledge": []}])
+def test_empty_authoring_request_is_rejected(payload: dict) -> None:
     with pytest.raises(ValueError):
-        AuthoringRequest.model_validate(
-            {
-                "required_knowledge": [],
-                "difficulty": "中等",
-                "problem_type": "算法设计",
-            }
+        AuthoringRequest.model_validate(payload)
+
+
+def _new_success(client: TestClient, payload: dict | None = None) -> dict:
+    client.put("/api/agent/config", json=config_payload())
+    response = client.post("/api/agent/tasks", json=payload or {"prompt": "出一道整数求和题"})
+    assert response.status_code == 200, response.text
+    task = wait_terminal(client, response.json()["data"]["task_id"])
+    assert task["status"] == "success", task
+    return task
+
+
+def test_prompt_only_and_explicit_precedence(agent_client):
+    client, _, requests = agent_client
+    task = _new_success(client)
+    assert task["request"] == {"prompt": "出一道整数求和题"}
+    assert task["final_problem"]["problem"]["difficulty"] == "入门"
+    assert task["effective_requirements"]["testcase_count"] == 4
+    task2 = _new_success(client, {"prompt": "出一道简单题", "difficulty": "困难"})
+    assert task2["final_problem"]["problem"]["difficulty"] == "困难"
+    prompt = json.loads(json.loads(requests[-1].content)["messages"][1]["content"])
+    assert prompt["requirements"] == {"prompt": "出一道简单题", "difficulty": "困难"}
+    records = client.get("/api/agent/records", params={"page_size": 1}).json()["data"]
+    assert records["total"] == 2 and len(records["items"]) == 1
+    assert "reference_solution" not in json.dumps(records)
+    assert "testcases" not in json.dumps(records)
+    filtered = client.get("/api/agent/records", params={"difficulty": "困难"}).json()["data"]
+    assert filtered["total"] == 1
+
+
+def test_duplicate_create_request_does_not_generate_twice(agent_client):
+    client, _, requests = agent_client
+    task = _new_success(client, {"prompt": "整数求和", "request_id": "one-submit"})
+    before = len(requests)
+    response = client.post(
+        "/api/agent/tasks", json={"prompt": "整数求和", "request_id": "one-submit"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["task_id"] == task["task_id"]
+    assert client.get("/api/agent/records").json()["data"]["total"] == 1
+    assert len(requests) == before
+    conflict = client.post(
+        "/api/agent/tasks", json={"prompt": "另一道题", "request_id": "one-submit"}
+    )
+    assert conflict.status_code == 409
+
+
+def test_manual_version_validation_import_and_refine_base(agent_client):
+    client, _, requests = agent_client
+    original = _new_success(client)
+    tid = original["task_id"]
+    assert client.post(f"/api/agent/tasks/{tid}/import", json={"confirm": True}).status_code == 200
+    edited = deepcopy(original["final_problem"])
+    edited["problem"]["title"] = "手动保留的标题"
+    edited["problem"]["description"] += " 这是手动添加的说明。"
+    result = client.post(f"/api/agent/tasks/{tid}/versions", json={"generated": edited})
+    assert result.status_code == 200, result.text
+    manual_id = result.json()["data"]["task_id"]
+    manual = client.get(f"/api/agent/tasks/{manual_id}").json()["data"]
+    assert manual["stage"] == "awaiting_validation" and manual["validation_report"] is None
+    assert manual["draft"] == edited
+    assert (
+        client.post(f"/api/agent/tasks/{manual_id}/import", json={"confirm": True}).status_code
+        == 409
+    )
+    calls_before = len(requests)
+    validating = client.post(f"/api/agent/tasks/{manual_id}/validate").json()["data"]["task_id"]
+    validated = wait_terminal(client, validating)
+    assert validated["status"] == "success"
+    assert len(requests) == calls_before  # Validation never calls the model or rewrites content.
+    assert validated["final_problem"] == edited
+    imported = client.post(
+        f"/api/agent/tasks/{validating}/import",
+        json={
+            "confirm": True,
+            "update_existing": True,
+            "problem_id": "AI_SUM_1",
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    assert client.get("/api/problems/AI_SUM_1").json()["data"]["title"] == "手动保留的标题"
+    revised_id = client.post(
+        f"/api/agent/tasks/{manual_id}/refine", json={"feedback": "增加一个样例"}
+    ).json()["data"]["task_id"]
+    revised = wait_terminal(client, revised_id)
+    prompt = json.loads(json.loads(requests[-1].content)["messages"][1]["content"])
+    assert prompt["previous_draft"] == edited
+    assert prompt["revision_feedback"] == "增加一个样例"
+    assert revised["base_task_id"] == manual_id
+    record = client.get(f"/api/agent/records/{original['record_id']}").json()["data"]
+    assert record["version_count"] == 4 and record["imported_problem_id"] == "AI_SUM_1"
+    assert len({v["revision"] for v in record["versions"]}) == 4
+    assert (
+        client.get(f"/api/agent/tasks/{tid}").json()["data"]["final_problem"]
+        == original["final_problem"]
+    )
+    assert (
+        client.post(
+            f"/api/agent/tasks/{revised_id}/import",
+            json={
+                "confirm": True,
+                "problem_id": "AI_SUM_COPY",
+            },
+        ).status_code
+        == 200
+    )
+
+
+def test_failed_manual_validation_preserves_content_and_last_success(agent_client):
+    client, _, requests = agent_client
+    original = _new_success(client)
+    edited = deepcopy(original["final_problem"])
+    edited["problem"]["testcases"][0]["output"] = "999\n"
+    before = len(requests)
+    response = client.post(
+        f"/api/agent/tasks/{original['task_id']}/versions",
+        json={"generated": edited, "validate": True},
+    )
+    task = wait_terminal(client, response.json()["data"]["task_id"])
+    assert task["status"] == "error" and task["draft"] == edited
+    assert task["final_problem"] is None and len(requests) == before
+    records = client.get("/api/agent/records").json()["data"]["items"]
+    assert len(records) == 1 and records[0]["status"] == "error"
+    assert records[0]["usable_task_id"] == original["task_id"]
+    retried = client.post(f"/api/agent/tasks/{task['task_id']}/retry").json()["data"]["task_id"]
+    retry = wait_terminal(client, retried)
+    assert retry["draft"] == edited and retry["status"] == "error"
+    assert len(requests) == before
+
+
+def test_retry_uses_same_base_and_new_configuration(agent_client):
+    client, _, requests = agent_client
+    original = _new_success(client)
+    transport = client.app.state.agent_model_client.transport
+    client.app.state.agent_model_client.transport = httpx.MockTransport(
+        lambda request: httpx.Response(503)
+    )
+    failed_id = client.post(
+        f"/api/agent/tasks/{original['task_id']}/refine", json={"feedback": "增加解释"}
+    ).json()["data"]["task_id"]
+    failed = wait_terminal(client, failed_id)
+    assert failed["status"] == "error"
+    client.app.state.agent_model_client.transport = transport
+    client.put("/api/agent/config", json=config_payload(model_name="replacement-model"))
+    retried_id = client.post(f"/api/agent/tasks/{failed_id}/retry").json()["data"]["task_id"]
+    retried = wait_terminal(client, retried_id)
+    assert retried["status"] == "success" and retried["task_id"] != failed_id
+    assert retried["base_task_id"] == original["task_id"]
+    assert retried["feedback"] == "增加解释"
+    outgoing = json.loads(requests[-1].content)
+    assert outgoing["model"] == "replacement-model"
+    assert (
+        json.loads(outgoing["messages"][1]["content"])["previous_draft"]
+        == original["final_problem"]
+    )
+    assert client.get(f"/api/agent/tasks/{failed_id}").json()["data"]["status"] == "error"
+
+
+def test_record_serializes_concurrent_requests_and_is_owner_isolated(agent_client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, _, _ = agent_client
+    original = _new_success(client)
+
+    async def delayed(request):
+        await asyncio.sleep(0.6)
+        return httpx.Response(503)
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(delayed)
+    with ThreadPoolExecutor(2) as pool:
+        futures = [
+            pool.submit(
+                client.post,
+                f"/api/agent/tasks/{original['task_id']}/refine",
+                json={"feedback": "增加解释"},
+            )
+            for _ in range(2)
+        ]
+        responses = [f.result() for f in futures]
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    client.post("/api/auth/logout")
+    client.post("/api/users/", json={"username": "record-reader", "password": "secret123"})
+    client.post("/api/auth/login", json={"username": "record-reader", "password": "secret123"})
+    assert client.get("/api/agent/records").json()["data"]["total"] == 0
+    assert client.get(f"/api/agent/records/{original['record_id']}").status_code == 404
+    for action, body in [
+        ("refine", {"feedback": "change"}),
+        ("retry", {}),
+        ("validate", {}),
+        ("versions", {"generated": original["final_problem"]}),
+    ]:
+        assert (
+            client.post(f"/api/agent/tasks/{original['task_id']}/{action}", json=body).status_code
+            == 404
         )
+
+
+def test_legacy_record_backfill_is_idempotent(agent_client):
+    client, path, _ = agent_client
+    original = _new_success(client)
+    child_id = client.post(
+        f"/api/agent/tasks/{original['task_id']}/versions",
+        json={"generated": original["final_problem"]},
+    ).json()["data"]["task_id"]
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE agent_tasks SET record_id=NULL")
+    from backend.app.core.database import Database
+
+    asyncio.run(Database(path).initialize())
+    asyncio.run(Database(path).initialize())
+    record = client.get(f"/api/agent/records/{original['task_id']}").json()["data"]
+    assert record["version_count"] == 2
+    assert (
+        client.get(f"/api/agent/tasks/{child_id}").json()["data"]["record_id"]
+        == original["task_id"]
+    )
+
+
+class AgentUIAdapter:
+    base_url = "http://agent-test"
+
+    def __init__(self, client):
+        self.client = client
+
+    def get(self, path, **kwargs):
+        return self._call("GET", path, **kwargs)
+
+    def post(self, path, **kwargs):
+        return self._call("POST", path, **kwargs)
+
+    def _call(self, method, path, **kwargs):
+        from frontend.errors import ApiError
+
+        response = self.client.request(method, "/api" + path, **kwargs)
+        if response.status_code != 200:
+            raise ApiError(response.status_code, response.json()["msg"])
+        return response.json()
+
+
+def test_authoring_drafts_are_cleared_when_changing_account():
+    from frontend.session import set_auth_user
+
+    state = {
+        'auth_user': {'id': 1}, 'agent_new_draft': {'prompt': 'private requirements'},
+        'agent_editor_old_title': 'private title', 'agent_create_submission': {'id': 'private'},
+    }
+    set_auth_user({'id': 2}, state)
+    assert state == {'auth_user': {'id': 2}}
+
+
+def test_legacy_requirement_controls_preserve_small_counts_and_deleted_source():
+    app = AppTest.from_string('''
+from frontend.pages.agent_workspace import requirement_inputs
+class Api:
+    base_url = "http://legacy-agent-fixture"
+    def get(self, path, **kwargs):
+        return {"data": []}
+requirement_inputs(Api(), "legacy", {
+    "prompt": "历史任务", "testcase_count": 1,
+    "adapt_existing": True, "existing_problem_id": "deleted-source",
+})
+''').run()
+    assert not app.exception
+    assert app.number_input(key='legacy_testcase_count').value == 1
+    assert app.selectbox(key='legacy_existing_problem_id').value == 'deleted-source'
+    assert any('原改编题目已不可用' in warning.value for warning in app.warning)
+
+
+def _ui(client, task_id=None):
+    app = AppTest.from_file(
+        Path(__file__).parent / "fixtures" / "agent_pages.py", default_timeout=15
+    )
+    app.session_state["test_api"] = AgentUIAdapter(client)
+    if task_id:
+        app.query_params["agent_active_view"] = "任务详情"
+        app.query_params["agent_task_id"] = task_id
+    return app
+
+
+def test_ui_prompt_settings_clear_and_history_navigation(agent_client):
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    app = _ui(client).run()
+    assert not app.exception
+    assert app.number_input(key="agent_new_initial_time_limit").value is None
+    app.button(key="agent_new_initial_example_算法入门").click().run()
+    assert "二分查找" in app.text_area(key="agent_new_initial_prompt").value
+    app.selectbox(key="agent_new_initial_difficulty").select("困难").run()
+    assert app.session_state["agent_new_draft"]["difficulty"] == "困难"
+    app.button(key="agent_new_initial_clear_difficulty").click().run()
+    assert "difficulty" not in app.session_state["agent_new_draft"]
+    app.button(key="agent_new_initial_submit").click().run()
+    assert not app.exception
+    tid = app.query_params["agent_task_id"][0]
+    task = wait_terminal(client, tid)
+    app.run()
+    assert not app.exception
+    app.query_params["agent_active_view"] = "出题记录"
+    app.run()
+    assert not app.exception
+    app.button(key=f"agent_open_{task['record_id']}").click().run()
+    assert not app.exception
+    assert app.query_params["agent_task_id"] == [tid]
+
+
+def test_ui_manual_edit_save_switch_versions_and_narrow_panes(agent_client, monkeypatch):
+    from types import SimpleNamespace
+
+    from frontend.pages import agent_workspace
+
+    client, _, _ = agent_client
+    task = _new_success(client)
+    app = _ui(client, task["task_id"])
+    app.query_params["agent_workspace_mode"] = "编辑"
+    app.run()
+    assert not app.exception
+    prefix = f"agent_editor_{task['task_id']}"
+    app.text_input(key=f"{prefix}_title").set_value("手动标题")
+    next(b for b in app.button if b.label == "保存新版本").click().run()
+    assert not app.exception
+    manual_id = app.query_params["agent_task_id"][0]
+    manual = client.get(f"/api/agent/tasks/{manual_id}").json()["data"]
+    assert manual["draft"]["problem"]["title"] == "手动标题"
+    app.selectbox(key="agent_version_selection").select(task["task_id"]).run()
+    assert app.query_params["agent_task_id"] == [task["task_id"]]
+    app.selectbox(key="agent_version_selection").select(manual_id).run()
+    assert app.query_params["agent_task_id"] == [manual_id]
+    monkeypatch.setattr(
+        agent_workspace, "_viewport", lambda **kwargs: SimpleNamespace(compact=True)
+    )
+    app.run()
+    assert not app.exception
+    assert any(t.label == "继续修改" for t in app.text_area)
+    app.session_state["agent_compact_pane"] = "题目"
+    app.run()
+    assert not app.exception
+    assert not any(t.label == "继续修改" for t in app.text_area)
 
 
 def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> None:
@@ -173,9 +512,7 @@ def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> No
             "problem_type": "算法设计",
         }
     )
-    result = apply_requested_metadata(
-        GeneratedProblem.model_validate(generated_problem()), request
-    )
+    result = apply_requested_metadata(GeneratedProblem.model_validate(generated_problem()), request)
 
     assert result.problem.difficulty == "中等"
     assert result.problem.problem_type == "算法设计"
@@ -311,9 +648,7 @@ def test_regular_user_has_isolated_agent_config_and_tasks(agent_client) -> None:
     alice_task = client.post("/api/agent/tasks", json=authoring_payload()).json()["data"]
 
     client.post("/api/auth/logout")
-    client.post(
-        "/api/auth/login", json={"username": "admin", "password": "admintestpassword"}
-    )
+    client.post("/api/auth/login", json={"username": "admin", "password": "admintestpassword"})
     assert client.get("/api/agent/config").json()["data"]["model_name"] == "test-model"
     assert client.get(f"/api/agent/tasks/{alice_task['task_id']}").status_code == 200
     assert all(
@@ -365,9 +700,7 @@ def test_legacy_global_agent_config_migrates_to_admin(tmp_path: Path) -> None:
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(agent_config)").fetchall()
         }
-        row = connection.execute(
-            "SELECT user_id, model_name FROM agent_config"
-        ).fetchone()
+        row = connection.execute("SELECT user_id, model_name FROM agent_config").fetchone()
     assert "user_id" in columns and "id" not in columns
     assert row == (7, "legacy-model")
 

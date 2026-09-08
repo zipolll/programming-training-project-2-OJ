@@ -27,6 +27,10 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+class RecordBusyError(ValueError):
+    """Another execution already owns this record."""
+
+
 class AgentRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -79,25 +83,69 @@ class AgentRepository:
         parent_task_id: str | None = None,
         revision: int = 1,
         currency: str = "USD",
+        base_task_id: str | None = None,
+        operation: str = "generate",
+        feedback: str = "",
+        generated: GeneratedProblem | None = None,
+        queued: bool = True,
     ) -> AgentTask:
         now = utc_now()
         async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                "SELECT * FROM agent_tasks WHERE task_id=?", (task_id,)
+            )
+            existing = await cursor.fetchone()
+            if existing is not None:
+                if existing["user_id"] != user_id or existing["request_json"] != _json(
+                    request.model_dump(mode="json", exclude_unset=True)
+                ):
+                    raise RecordBusyError("请求标识已被其他内容使用，请重新提交。")
+                return self._task(dict(existing))
+            record_id = task_id
+            if parent_task_id:
+                cursor = await connection.execute(
+                    "SELECT record_id FROM agent_tasks WHERE task_id=? AND user_id=?",
+                    (parent_task_id, user_id),
+                )
+                parent = await cursor.fetchone()
+                if parent is None:
+                    raise LookupError("agent task not found")
+                record_id = parent[0]
+                cursor = await connection.execute(
+                    "SELECT MAX(revision), SUM(status IN ('pending','running')) "
+                    "FROM agent_tasks WHERE record_id=? AND user_id=?",
+                    (record_id, user_id),
+                )
+                current = await cursor.fetchone()
+                if current[1]:
+                    raise RecordBusyError("此记录已有正在运行的任务，请等待完成或停止任务。")
+                revision = current[0] + 1
             await connection.execute(
                 """
                 INSERT INTO agent_tasks
                 (task_id,user_id,parent_task_id,revision,status,stage,progress,request_json,
-                 cost,currency,created_at,updated_at)
-                VALUES (?, ?, ?, ?, 'pending', 'queued', 0, ?, '0', ?, ?, ?)
+                 cost,currency,created_at,updated_at,record_id,base_task_id,operation,
+                 feedback,draft_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     user_id,
                     parent_task_id,
                     revision,
-                    _json(request),
+                    "pending" if queued else "success",
+                    "queued" if queued else "awaiting_validation",
+                    0 if queued else 100,
+                    _json(request.model_dump(mode="json", exclude_unset=True)),
                     currency,
                     now.isoformat(),
                     now.isoformat(),
+                    record_id,
+                    base_task_id,
+                    operation,
+                    feedback,
+                    _json(generated) if generated else None,
                 ),
             )
             await connection.commit()
@@ -121,6 +169,105 @@ class AgentRepository:
             )
             rows = await cursor.fetchall()
         return [self._task(dict(row)) for row in rows]
+
+    async def record_versions(self, user_id: int, record_id: str) -> list[dict[str, Any]]:
+        """Read version metadata only; never load test data or reference code for a list."""
+        return await self._summaries(user_id, record_id)
+
+    async def _summaries(
+        self,
+        user_id: int,
+        record_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT t.task_id,t.record_id,t.parent_task_id,t.base_task_id,t.operation,
+                    t.revision,t.feedback,t.status,t.stage,t.progress,t.created_at,t.updated_at,
+                    t.safe_error_message,t.error_code,t.cost,t.currency,t.total_tokens,
+                    i.problem_id AS imported_problem_id,
+                    COALESCE(json_extract(t.final_problem_json,'$.problem.title'),
+                        json_extract(t.draft_json,'$.problem.title'),'') AS title,
+                    COALESCE(json_extract(t.final_problem_json,'$.problem.difficulty'),
+                        json_extract(t.draft_json,'$.problem.difficulty'),
+                        json_extract(t.request_json,'$.difficulty'),'') AS difficulty,
+                    COALESCE(json_extract(t.request_json,'$.prompt'),
+                        json_extract(t.request_json,'$.additional_requirements'),'') AS prompt,
+                    COALESCE(json_extract(t.request_json,'$.required_knowledge'),'[]') AS knowledge,
+                    (t.final_problem_json IS NOT NULL AND t.status='success') AS usable,
+                    (t.draft_json IS NOT NULL OR t.final_problem_json IS NOT NULL) AS has_content
+                FROM agent_tasks t LEFT JOIN agent_imports i ON i.task_id=t.task_id
+                WHERE t.user_id=? AND (? IS NULL OR t.record_id=?)
+                ORDER BY t.created_at, t.revision, t.task_id
+                """,
+                (user_id, record_id, record_id),
+            )
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def summarize_record(versions: list[dict[str, Any]]) -> dict[str, Any]:
+        latest = versions[-1]
+        content = next((v for v in reversed(versions) if v["has_content"]), latest)
+        usable = next((v for v in reversed(versions) if v["usable"]), None)
+        imported = next((v for v in reversed(versions) if v["imported_problem_id"]), None)
+        active = next(
+            (v for v in reversed(versions) if v["status"] in ("pending", "running")), None
+        )
+        root = versions[0]
+        return {
+            "record_id": root["record_id"],
+            "latest_task_id": latest["task_id"],
+            "active_task_id": active["task_id"] if active else None,
+            "title": content["title"]
+            or root["prompt"][:80]
+            or "、".join(json.loads(root["knowledge"]))
+            or "未命名出题",
+            "prompt": root["prompt"],
+            "difficulty": content["difficulty"],
+            "status": "draft" if latest["stage"] == "awaiting_validation" else latest["status"],
+            "stage": latest["stage"],
+            "progress": latest["progress"],
+            "version_count": len(versions),
+            "updated_at": max(v["updated_at"] for v in versions),
+            "usable_task_id": usable["task_id"] if usable else None,
+            "editable_task_id": content["task_id"] if content["has_content"] else None,
+            "imported_problem_id": imported["imported_problem_id"] if imported else None,
+            "imported_task_id": imported["task_id"] if imported else None,
+            "safe_error_message": latest["safe_error_message"],
+        }
+
+    async def list_records(
+        self,
+        user_id: int,
+        *,
+        search: str = "",
+        status: str = "",
+        difficulty: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for version in await self._summaries(user_id):
+            groups.setdefault(version["record_id"], []).append(version)
+        records = [self.summarize_record(versions) for versions in groups.values()]
+        difficulties = sorted({r["difficulty"] for r in records if r["difficulty"]})
+        query = search.strip().casefold()
+        records = [
+            r
+            for r in records
+            if (
+                (not query or query in (r["title"] + " " + r["prompt"]).casefold())
+                and (not status or r["status"] == status)
+                and (not difficulty or r["difficulty"] == difficulty)
+            )
+        ]
+        records.sort(key=lambda r: (r["updated_at"], r["record_id"]), reverse=True)
+        return {
+            "items": records[(page - 1) * page_size : page * page_size],
+            "total": len(records),
+            "difficulties": difficulties,
+        }
 
     async def list_pending(self) -> list[str]:
         async with self.database.connect() as connection:
@@ -146,6 +293,7 @@ class AgentRepository:
 
     async def update_task(self, task_id: str, **values: Any) -> None:
         allowed = {
+            "effective_requirements_json",
             "status",
             "stage",
             "progress",
@@ -307,6 +455,11 @@ class AgentRepository:
             task_id=row["task_id"],
             user_id=row["user_id"],
             parent_task_id=row["parent_task_id"],
+            record_id=row.get("record_id") or row["task_id"],
+            base_task_id=row.get("base_task_id"),
+            operation=row.get("operation", "generate"),
+            feedback=row.get("feedback", ""),
+            effective_requirements=json.loads(row.get("effective_requirements_json") or "{}"),
             revision=row["revision"],
             status=AgentStatus(row["status"]),
             stage=row["stage"],

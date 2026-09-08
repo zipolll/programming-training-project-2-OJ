@@ -41,25 +41,25 @@ with sync_playwright() as pw:
     page.screenshot(path=str(out / "authoring-mobile.png"))
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     controls.filter(has_text="AI 智能命题").click()
-    stages = page.locator('[class*="agent_active_view"] [role="radio"]')
-    stages.filter(has_text="创建任务").click()
-    expect(page.get_by_text("命题方向", exact=True)).to_be_visible()
-    stages.filter(has_text="进度与结果").click()
-    expect(page.get_by_text("尚无命题任务，请先在“创建任务”中发起挑战。",
+    stages = page.locator('[class*="agent_nav_selection"] [role="radio"]')
+    stages.filter(has_text="新建出题").click()
+    expect(page.get_by_text("从一个想法开始", exact=True)).to_be_visible()
+    stages.filter(has_text="出题记录").click()
+    expect(page.get_by_text("没有符合条件的记录，调整筛选或开始一次新的出题。",
                             exact=False)).to_be_visible()
     expect(page.locator('[data-testid="stStatusWidget"]')).not_to_be_visible()
     page.reload()
-    expect(stages.filter(has_text="进度与结果")).to_have_attribute(
+    expect(stages.filter(has_text="出题记录")).to_have_attribute(
         "aria-checked", "true"
     )
     expect(page.locator('[data-testid="stStatusWidget"]')).not_to_be_visible()
     page.go_back()
-    expect(page.get_by_text("命题方向", exact=True)).to_be_visible()
-    expect(stages.filter(has_text="创建任务")).to_have_attribute("aria-checked", "true")
+    expect(page.get_by_text("从一个想法开始", exact=True)).to_be_visible()
+    expect(stages.filter(has_text="新建出题")).to_have_attribute("aria-checked", "true")
     expect(page.locator('[data-testid="stStatusWidget"]')).not_to_be_visible()
     # popstate triggers a document reload; let its browser bridge finish mounting.
     page.wait_for_timeout(750)
     page.go_forward()
-    expect(stages.filter(has_text="进度与结果")).to_have_attribute("aria-checked", "true")
+    expect(stages.filter(has_text="出题记录")).to_have_attribute("aria-checked", "true")
     print("System-dark palette, sidebar legibility and authoring typography passed.")
     browser.close()

@@ -16,9 +16,11 @@ from backend.app.modules.agent.models import (
     AuthoringRequest,
     ImportRequest,
     RefineRequest,
+    RetryRequest,
+    SaveVersionRequest,
     validate_provider_url,
 )
-from backend.app.modules.agent.repository import AgentRepository
+from backend.app.modules.agent.repository import AgentRepository, RecordBusyError
 from backend.app.modules.agent.task_manager import AgentTaskFinishedError, AgentTaskManager
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.service import (
@@ -53,11 +55,17 @@ async def get_audit_service(request: Request) -> AuditService:
 
 
 def _task_data(task: Any) -> dict[str, Any]:
-    return task.model_dump(mode="json", exclude={"user_id"})
+    data = task.model_dump(mode="json", exclude={"user_id"})
+    data["request"] = task.request.model_dump(mode="json", exclude_unset=True)
+    return data
 
 
 async def _owned_task(
-    repository: AgentRepository, task_id: str, user_id: int, *, is_admin: bool = False,
+    repository: AgentRepository,
+    task_id: str,
+    user_id: int,
+    *,
+    is_admin: bool = False,
 ):
     task = await repository.get_task(task_id)
     if task is None:
@@ -154,6 +162,8 @@ async def create_task(
         raise HTTPException(status_code=404, detail="problem not found") from exc
     except ModelClientError as exc:
         raise HTTPException(status_code=503, detail=exc.safe_message) from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ApiResponse(msg="task queued", data={"task_id": task_id, "status": "pending"})
@@ -168,15 +178,57 @@ async def list_tasks(
     return ApiResponse(data=[_task_data(task) for task in tasks])
 
 
+@router.get("/records", response_model=ApiResponse)
+async def list_records(
+    current_user: Annotated[User, Depends(require_login)],
+    repository: Annotated[AgentRepository, Depends(get_repository)],
+    search: Annotated[str, Query(max_length=200)] = "",
+    status: Annotated[
+        str, Query(pattern=r"^(pending|running|success|error|cancelled|draft)?$")
+    ] = "",
+    difficulty: Annotated[str, Query(max_length=50)] = "",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ApiResponse:
+    return ApiResponse(
+        data=await repository.list_records(
+            current_user.id,
+            search=search,
+            status=status,
+            difficulty=difficulty,
+            page=page,
+            page_size=page_size,
+        )
+    )
+
+
+@router.get("/records/{record_id}", response_model=ApiResponse)
+async def get_record(
+    record_id: str,
+    current_user: Annotated[User, Depends(require_login)],
+    repository: Annotated[AgentRepository, Depends(get_repository)],
+) -> ApiResponse:
+    versions = await repository.record_versions(current_user.id, record_id)
+    if not versions:
+        raise HTTPException(status_code=404, detail="agent record not found")
+    return ApiResponse(data={**repository.summarize_record(versions), "versions": versions})
+
+
 @router.get("/tasks/{task_id}", response_model=ApiResponse)
 async def get_task(
     task_id: str,
     current_user: Annotated[User, Depends(require_login)],
     repository: Annotated[AgentRepository, Depends(get_repository)],
 ) -> ApiResponse:
-    return ApiResponse(data=_task_data(await _owned_task(
-        repository, task_id, current_user.id, is_admin=current_user.role is UserRole.ADMIN,
-    )))
+    task = await _owned_task(
+        repository,
+        task_id,
+        current_user.id,
+        is_admin=current_user.role is UserRole.ADMIN,
+    )
+    return ApiResponse(
+        data={**_task_data(task), "imported_problem_id": await repository.get_import(task_id)}
+    )
 
 
 @router.get("/tasks/{task_id}/events", response_model=ApiResponse)
@@ -187,7 +239,10 @@ async def get_events(
     after_id: Annotated[int, Query(ge=0)] = 0,
 ) -> ApiResponse:
     await _owned_task(
-        repository, task_id, current_user.id, is_admin=current_user.role is UserRole.ADMIN,
+        repository,
+        task_id,
+        current_user.id,
+        is_admin=current_user.role is UserRole.ADMIN,
     )
     events = await repository.list_events(task_id, after_id)
     return ApiResponse(data=[event.model_dump(mode="json") for event in events])
@@ -218,12 +273,86 @@ async def refine_task(
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
-        new_task_id = await manager.refine(current_user.id, task_id, payload.feedback)
+        new_task_id = await manager.refine(
+            current_user.id,
+            task_id,
+            payload.feedback,
+            payload.request,
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="agent task not found") from exc
     except ModelClientError as exc:
         raise HTTPException(status_code=503, detail=exc.safe_message) from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ApiResponse(msg="revision queued", data={"task_id": new_task_id, "status": "pending"})
+
+
+@router.post("/tasks/{task_id}/retry", response_model=ApiResponse)
+async def retry_task(
+    task_id: str,
+    current_user: Annotated[User, Depends(require_login)],
+    manager: Annotated[AgentTaskManager, Depends(get_manager)],
+    payload: RetryRequest | None = None,
+) -> ApiResponse:
+    try:
+        new_id = await manager.retry(current_user.id, task_id, payload.request if payload else None)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="agent task not found") from exc
+    except ModelClientError as exc:
+        raise HTTPException(status_code=503, detail=exc.safe_message) from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(msg="retry queued", data={"task_id": new_id, "status": "pending"})
+
+
+@router.post("/tasks/{task_id}/versions", response_model=ApiResponse)
+async def save_version(
+    task_id: str,
+    payload: SaveVersionRequest,
+    current_user: Annotated[User, Depends(require_login)],
+    manager: Annotated[AgentTaskManager, Depends(get_manager)],
+) -> ApiResponse:
+    try:
+        new_id = await manager.save_version(
+            current_user.id,
+            task_id,
+            payload.generated,
+            validate=payload.validate_now,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="agent task not found") from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(
+        data={
+            "task_id": new_id,
+            "status": "pending" if payload.validate_now else "draft",
+        }
+    )
+
+
+@router.post("/tasks/{task_id}/validate", response_model=ApiResponse)
+async def validate_version(
+    task_id: str,
+    current_user: Annotated[User, Depends(require_login)],
+    manager: Annotated[AgentTaskManager, Depends(get_manager)],
+) -> ApiResponse:
+    try:
+        new_id = await manager.save_version(current_user.id, task_id, validate=True)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="agent task not found") from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ApiResponse(data={"task_id": new_id, "status": "pending"})
 
 
 @router.post("/tasks/{task_id}/import", response_model=ApiResponse)
@@ -250,6 +379,20 @@ async def import_task(
     ):
         raise HTTPException(status_code=409, detail="task is not eligible for import")
     problem = task.final_problem.problem
+    if payload.problem_id:
+        from pydantic import ValidationError
+
+        from backend.app.modules.problems.models import Problem
+
+        try:
+            problem = Problem.model_validate({**problem.model_dump(), "id": payload.problem_id})
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail="invalid problem id") from exc
+    if payload.update_existing:
+        versions = await repository.record_versions(current_user.id, task.record_id)
+        targets = {v["imported_problem_id"] for v in versions if v["imported_problem_id"]}
+        if targets and problem.id not in targets:
+            raise HTTPException(status_code=409, detail="请选择此出题记录已导入的目标题目。")
     try:
         if payload.update_existing:
             await problem_service.update_problem(problem.id, problem)

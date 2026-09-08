@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from ipaddress import ip_address
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -78,9 +78,11 @@ class AgentConfigView(StrictModel):
 
 
 class AuthoringRequest(StrictModel):
-    required_knowledge: list[str] = Field(min_length=1, max_length=30)
-    difficulty: str = Field(min_length=1, max_length=50)
-    problem_type: str = Field(min_length=1, max_length=100)
+    request_id: str | None = Field(default=None, min_length=1, max_length=100, exclude=True)
+    prompt: str = Field(default="", max_length=10000)
+    required_knowledge: list[str] = Field(default_factory=list, max_length=30)
+    difficulty: str = Field(default="", max_length=50)
+    problem_type: str = Field(default="", max_length=100)
     expected_algorithm: str = Field(default="", max_length=500)
     forbidden_knowledge: list[str] = Field(default_factory=list, max_length=30)
     data_scale: str = Field(default="", max_length=500)
@@ -96,13 +98,30 @@ class AuthoringRequest(StrictModel):
     def existing_problem_is_consistent(self) -> "AuthoringRequest":
         if self.adapt_existing and not self.existing_problem_id:
             raise ValueError("existing_problem_id is required when adapting a problem")
-        if not any(item.strip() for item in self.required_knowledge):
+        if any(not item.strip() for item in self.required_knowledge):
+            raise ValueError("knowledge items must not be blank")
+        if not any(
+            bool(value.strip() if isinstance(value, str) else value)
+            for value in self.model_dump(exclude_unset=True).values()
+        ):
             raise ValueError("authoring requirements must not be empty")
         return self
 
 
 class RefineRequest(StrictModel):
     feedback: str = Field(min_length=1, max_length=10000)
+    request: AuthoringRequest | None = None
+
+    @field_validator("feedback")
+    @classmethod
+    def nonempty_feedback(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("feedback must not be blank")
+        return value.strip()
+
+
+class RetryRequest(StrictModel):
+    request: AuthoringRequest | None = None
 
 
 class GeneratedProblem(StrictModel):
@@ -112,6 +131,11 @@ class GeneratedProblem(StrictModel):
     reference_solution_language: str = Field(default="python", pattern=r"^(python|cpp)$")
     reference_solution: str = Field(min_length=1, max_length=1_000_000)
     wrong_solutions: list[str] = Field(default_factory=list, max_length=5)
+
+
+class SaveVersionRequest(StrictModel):
+    generated: GeneratedProblem
+    validate_now: bool = Field(default=False, alias="validate")
 
 
 class ValidationReport(StrictModel):
@@ -134,6 +158,11 @@ class AgentTask(StrictModel):
     task_id: str
     user_id: int
     parent_task_id: str | None = None
+    record_id: str = ""
+    base_task_id: str | None = None
+    operation: Literal["generate", "refine", "retry", "edit", "validate"] = "generate"
+    feedback: str = ""
+    effective_requirements: dict[str, Any] = Field(default_factory=dict)
     revision: int
     status: AgentStatus
     stage: str
@@ -170,3 +199,4 @@ class AgentEvent(StrictModel):
 class ImportRequest(StrictModel):
     confirm: bool = False
     update_existing: bool = False
+    problem_id: str | None = Field(default=None, min_length=1, max_length=64)

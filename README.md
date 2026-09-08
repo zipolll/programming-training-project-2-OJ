@@ -1,6 +1,6 @@
 # Programming Training Project 2 — Online Judge
 
-程序设计训练大作业二的 Online Judge 项目。本仓库目前提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施；公共异步数据层、用户认证、课程 Step 1 题目管理、Step 2 语言注册和评测引擎、Step 2/3 Submission 生命周期，以及 Step 4/5 用户权限、评测日志与访问审计已经实现。前端管理页面与 AI 命题功能仍留待后续阶段。
+程序设计训练大作业二的 Online Judge 项目。提供可运行的 FastAPI 后端、Streamlit 前端和测试基础设施，包含题目与题库管理、用户认证、异步评测、权限与审计，以及支持自然语言、连续修订和手动编辑的 AI 命题工作台。
 
 ## 环境要求
 
@@ -280,22 +280,46 @@ AI API 均要求登录，任务按当前用户隔离，并沿用 `{code,msg,data
 - `GET /api/agent/config`：返回脱敏配置与加密可用状态。
 - `PUT /api/agent/config`：保存配置；`api_key` 留空表示保留已加密值。
 - `POST /api/agent/config/test`：发起最小结构化连接测试。
-- `POST /api/agent/tasks`：提交知识点、难度和题型，并可选指定算法、避免使用的知识点、
-  数据规模、资源限制、背景、测试点数、补充要求及 `existing_problem_id`，立即返回
-  `pending`。算法和数据规模留空时由 Agent 自行确定。
+- `POST /api/agent/tasks`：提交 `prompt` 或部分命题设置，支持二者结合；未指定的字段由
+  AI 决定，非空固定设置优先于文字要求。兼容原有完整设置请求；全部为空则拒绝。
+  可提供 `request_id` 实现用户内请求去重，相同标识与内容返回同一个任务。
+- `GET /api/agent/records`：按最近更新时间倒序返回分组摘要，支持 `search`、`status`、
+  `difficulty`、`page`、`page_size`，响应含 `items`、`total`、`difficulties`；不返回完整题目。
+- `GET /api/agent/records/{record_id}`：返回同一最初需求的版本和执行摘要、最近可用版本、
+  最新可编辑版本、正在运行的任务，以及导入关联。
 - `GET /api/agent/tasks` 与 `GET /api/agent/tasks/{task_id}`：查询当前用户自己的
   任务、结果、验证报告和本轮用量。
 - `GET /api/agent/tasks/{task_id}/events?after_id=N`：最多返回 200 条增量事件。
 - `POST /api/agent/tasks/{task_id}/cancel`：设置持久化取消标记，并取消当前模型请求或
   Judge 操作；Judge 的取消处理会终止进程树。
-- `POST /api/agent/tasks/{task_id}/refine`，参数 `feedback`：创建保留父任务的新 revision。
-- `POST /api/agent/tasks/{task_id}/import`，参数 `confirm`、`update_existing`：人工确认后
-  通过现有 ProblemService 新增或更新；同一任务重复导入幂等。
+- `POST /api/agent/tasks/{task_id}/refine`：参数 `feedback`、可选完整替换的 `request`。
+  明确以路径中的任务版本为基础，向模型传入完整题目和参考解法；修订另存为新版本。
+- `POST /api/agent/tasks/{task_id}/retry`：仅失败或已停止的任务可重试；可传 `request`
+  替换命题要求。使用当前模型配置和原来的基础版本；旧错误与费用保持不变。
+- `POST /api/agent/tasks/{task_id}/versions`：提交完整 `generated`（GeneratedProblem）
+  及可选 `validate`。手动保存另建版本，`stage=awaiting_validation` 表示待验证，此时
+  无验证报告且不可导入；`validate=true` 同时排队验证，完全不调用模型或改写内容。
+- `POST /api/agent/tasks/{task_id}/validate`：复制所选题目内容并新增一次纯验证执行。
+- `POST /api/agent/tasks/{task_id}/import`：参数 `confirm`、`update_existing`、可选
+  `problem_id`。验证通过并人工确认后，选择更新此记录已导入的题目或另存新题；原题
+  不存在时更新返回 404，可改为另存。同一版本重复导入幂等。
+
+入口保留在“命题中心 → AI 智能命题”，内部为“新建出题 / 出题记录 / 任务详情”，
+模型配置通过次级按钮进入。桌面详情提供对话与题目双栏，窄屏切换“对话 / 题目”。
+新建页提供示例需求和可清除的固定条件；记录页支持搜索、筛选、分页、直接修改与重试。
+可沿用任意历史版本的要求创建独立记录。生成状态与导入状态分开显示；失败后仍可
+打开之前的可用题目。手动编辑题面、样例、测试点和参考解法后必须重新验证才能导入。
+
+数据库启动时幂等增加记录、基础版本、操作与实际要求字段，按旧父任务关系回填分组；
+原任务 ID 与访问接口继续有效。创建同一记录的后续版本使用数据库事务检查忙碌状态，
+同时只允许一次生成或验证；返回 409 时可等待或停止当前执行。待验证的手动稿保持
+旧任务状态枚举兼容：任务接口为 `success/awaiting_validation`，记录摘要显示 `draft`。
 
 任务由 FastAPI lifespan 所有的单 worker `asyncio.Queue` 运行，状态为 `pending →
 running → success/error/cancelled`。重启时，尚未付费的 pending 会恢复；遗留 running
-会标记为 `error/service_restarted`，不会自动产生第二次费用。事件驱动前端每秒增量
-轮询，终态或网络错误即停止，不使用虚假进度动画。
+会标记为 `error/service_restarted`，不会自动产生第二次费用。详情每 2 秒刷新活动任务，
+终态或网络错误即暂停；用户可恢复刷新。运行中的记录列表每 5 秒检查摘要变化。
+完整执行日志按需加载，不使用虚假进度动画。
 
 Agent Loop 和受控工具关系如下：
 

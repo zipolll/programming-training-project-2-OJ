@@ -5,7 +5,7 @@ import json
 import logging
 from contextlib import suppress
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import ValidationError
 
@@ -33,13 +33,12 @@ def apply_requested_metadata(
             if item.strip()
         )
     )
-    problem = generated.problem.model_copy(
-        update={
-            "difficulty": request.difficulty.strip(),
-            "problem_type": request.problem_type.strip(),
-            "tags": tags,
-        }
-    )
+    updates: dict[str, Any] = {"tags": tags}
+    for key in ("difficulty", "problem_type", "time_limit", "memory_limit"):
+        value = getattr(request, key)
+        if key in request.model_fields_set and value:
+            updates[key] = value.strip() if isinstance(value, str) else value
+    problem = generated.problem.model_copy(update=updates)
     return generated.model_copy(update={"problem": problem})
 
 
@@ -117,23 +116,29 @@ class AgentTaskManager:
         if request.existing_problem_id:
             await self.problem_service.get_problem(request.existing_problem_id)
         config = await self.model_client.configuration(user_id)
-        task_id = str(uuid4())
+        task_id = (
+            str(uuid5(NAMESPACE_URL, f"oj-agent:{user_id}:{request.request_id}"))
+            if request.request_id
+            else str(uuid4())
+        )
         await self.repository.create_task(task_id, user_id, request, currency=config.currency)
         await self.repository.add_event(task_id, "queued", "status", "Task queued", 0)
         await self.enqueue(task_id)
         return task_id
 
-    async def refine(self, user_id: int, parent_task_id: str, feedback: str) -> str:
+    async def refine(
+        self,
+        user_id: int,
+        parent_task_id: str,
+        feedback: str,
+        request: AuthoringRequest | None = None,
+    ) -> str:
         parent = await self.repository.get_task(parent_task_id)
         if parent is None or parent.user_id != user_id:
             raise LookupError("task not found")
-        requirements = parent.request.model_copy(
-            update={
-                "additional_requirements": (
-                    f"{parent.request.additional_requirements}\nRevision feedback: {feedback}"
-                ).strip()
-            }
-        )
+        if not (parent.final_problem or parent.draft):
+            raise ValueError("尚无可修改的题目，请先重试生成。")
+        requirements = request or parent.request
         config = await self.model_client.configuration(user_id)
         task_id = str(uuid4())
         await self.repository.create_task(
@@ -143,10 +148,92 @@ class AgentTaskManager:
             parent_task_id=parent_task_id,
             revision=parent.revision + 1,
             currency=config.currency,
+            base_task_id=parent_task_id,
+            operation="refine",
+            feedback=feedback,
         )
         await self.repository.add_event(task_id, "queued", "status", "Revision queued", 0)
         await self.enqueue(task_id)
         return task_id
+
+    async def retry(
+        self,
+        user_id: int,
+        task_id: str,
+        request: AuthoringRequest | None = None,
+    ) -> str:
+        parent = await self.repository.get_task(task_id)
+        if parent is None or parent.user_id != user_id:
+            raise LookupError("agent task not found")
+        if parent.status not in {AgentStatus.ERROR, AgentStatus.CANCELLED}:
+            raise ValueError("只有失败或已停止的任务可以重试。")
+        validating = parent.operation == "validate"
+        config = None if validating else await self.model_client.configuration(user_id)
+        new_id = str(uuid4())
+        await self.repository.create_task(
+            new_id,
+            user_id,
+            request or parent.request,
+            parent_task_id=task_id,
+            base_task_id=parent.base_task_id,
+            operation="validate" if validating else "retry",
+            feedback=parent.feedback,
+            generated=parent.draft if validating else None,
+            currency=config.currency if config else parent.currency,
+        )
+        await self.repository.add_event(new_id, "queued", "retry", "已创建新的重试执行。", 0)
+        await self.enqueue(new_id)
+        return new_id
+
+    async def save_version(
+        self,
+        user_id: int,
+        task_id: str,
+        generated: GeneratedProblem | None = None,
+        *,
+        validate: bool = False,
+    ) -> str:
+        parent = await self.repository.get_task(task_id)
+        if parent is None or parent.user_id != user_id:
+            raise LookupError("agent task not found")
+        previous = parent.final_problem or parent.draft
+        candidate = generated or previous
+        if candidate is None:
+            raise ValueError("尚无可验证或编辑的题目。")
+        requirements = parent.request
+        if generated is not None and previous is not None:
+            changes = {}
+            for key in ("difficulty", "problem_type", "time_limit", "memory_limit"):
+                if getattr(candidate.problem, key) != getattr(previous.problem, key):
+                    changes[key] = getattr(candidate.problem, key)
+            if candidate.problem.tags != previous.problem.tags:
+                changes["required_knowledge"] = candidate.problem.tags
+            if candidate.problem.testcases != previous.problem.testcases:
+                changes["testcase_count"] = len(candidate.problem.testcases)
+            requirements = AuthoringRequest.model_validate(
+                {
+                    **requirements.model_dump(exclude_unset=True),
+                    **changes,
+                }
+            )
+        new_id = str(uuid4())
+        await self.repository.create_task(
+            new_id,
+            user_id,
+            requirements,
+            parent_task_id=task_id,
+            base_task_id=task_id,
+            operation="validate" if validate else "edit",
+            generated=candidate,
+            queued=validate,
+            feedback="保存手动修改并验证"
+            if generated and validate
+            else ("保存手动修改" if generated else "验证此版本"),
+            currency=parent.currency,
+        )
+        if validate:
+            await self.enqueue(new_id)
+        return new_id
 
     async def enqueue(self, task_id: str) -> bool:
         if not self._accepting:
@@ -216,6 +303,27 @@ class AgentTaskManager:
             started_at=utc_now(),
         )
         try:
+            if task.operation == "validate":
+                assert task.draft is not None
+                await self._stage(task_id, "execute_reference", 62, "正在验证已保存的题目")
+                report = await self.tools.build_validation_report(task.draft)
+                self._check(cancelled)
+                if report.blocking_errors:
+                    await self._fail(
+                        task_id, "validation_failed", "验证未通过，题目内容已保留。", report
+                    )
+                else:
+                    await self.repository.update_task(
+                        task_id,
+                        status=AgentStatus.SUCCESS,
+                        stage="finalize",
+                        progress=100,
+                        final_problem_json=task.draft,
+                        validation_report_json=report,
+                        effective_requirements_json=self._effective(task.draft, task.request),
+                        finished_at=utc_now(),
+                    )
+                return
             await self._stage(task_id, "requirement_analysis", 5, "Analyzing requirements")
             self._check(cancelled)
             context = await self.tools.search_problem_bank(
@@ -239,10 +347,30 @@ class AgentTaskManager:
                 12,
                 f"Retrieved {len(context)} bounded local problem summaries",
             )
+            base = await self.repository.get_task(task.base_task_id) if task.base_task_id else None
+            previous = (base.final_problem or base.draft) if base else None
             generated = await self._generate(
-                task.user_id, task_id, task.request, context, None, None
+                task.user_id,
+                task_id,
+                task.request,
+                context,
+                previous,
+                None,
+                task.feedback,
             )
             await self.repository.update_task(task_id, draft_json=generated)
+            await self.repository.update_task(
+                task_id,
+                effective_requirements_json=self._effective(generated, task.request),
+            )
+            if task.request.prompt and task.request.model_fields_set - {"prompt", "request_id"}:
+                await self.repository.add_event(
+                    task_id,
+                    "requirement_analysis",
+                    "requirements",
+                    "已按固定设置生成；文字中与固定设置冲突的要求不会覆盖设置。",
+                    22,
+                )
             await self._stage(task_id, "design_problem", 22, "Problem structure generated")
             await self._stage(task_id, "generate_solution", 32, "Reference solution generated")
             await self._stage(task_id, "generate_testcases", 42, "Testcases generated")
@@ -256,7 +384,10 @@ class AgentTaskManager:
                     task_id, "execute_reference", 62, "Executing reference solution in judge"
                 )
                 report = await self.tools.build_validation_report(generated)
-                if report.testcase_count < task.request.testcase_count:
+                if (
+                    "testcase_count" in task.request.model_fields_set
+                    and report.testcase_count < task.request.testcase_count
+                ):
                     report.blocking_errors.append(
                         f"requested {task.request.testcase_count} testcases but received "
                         f"{report.testcase_count}"
@@ -286,7 +417,13 @@ class AgentTaskManager:
                     f"Revision {iteration + 1}: repairing validation failures",
                 )
                 generated = await self._generate(
-                    task.user_id, task_id, task.request, context, generated, report
+                    task.user_id,
+                    task_id,
+                    task.request,
+                    context,
+                    generated,
+                    report,
+                    task.feedback,
                 )
                 await self.repository.update_task(task_id, draft_json=generated)
             assert report is not None
@@ -298,6 +435,7 @@ class AgentTaskManager:
                 progress=100,
                 final_problem_json=generated,
                 validation_report_json=report,
+                effective_requirements_json=self._effective(generated, task.request),
                 finished_at=utc_now(),
             )
             await self.repository.add_event(
@@ -310,6 +448,18 @@ class AgentTaskManager:
         except ValidationError:
             await self._fail(task_id, "invalid_structured_output", "Model output failed validation")
 
+    @staticmethod
+    def _effective(generated: GeneratedProblem, request: AuthoringRequest) -> dict[str, Any]:
+        return {
+            "explicit": request.model_dump(mode="json", exclude_unset=True),
+            "difficulty": generated.problem.difficulty,
+            "problem_type": generated.problem.problem_type,
+            "knowledge": generated.problem.tags,
+            "time_limit": generated.problem.time_limit,
+            "memory_limit": generated.problem.memory_limit,
+            "testcase_count": len(generated.problem.testcases),
+        }
+
     async def _generate(
         self,
         user_id: int,
@@ -318,11 +468,13 @@ class AgentTaskManager:
         context: list[dict[str, Any]],
         previous: GeneratedProblem | None,
         report: ValidationReport | None,
+        feedback: str = "",
     ) -> GeneratedProblem:
         schema = GeneratedProblem.model_json_schema()
         prompt = {
             "task": "Create a complete, original, deterministic OJ problem in strict JSON.",
-            "requirements": request.model_dump(mode="json"),
+            "requirements": request.model_dump(mode="json", exclude_unset=True),
+            "revision_feedback": feedback,
             "local_context": context,
             "previous_draft": previous.model_dump(mode="json") if previous else None,
             "validation_failures": report.blocking_errors if report else [],
@@ -331,6 +483,10 @@ class AgentTaskManager:
                 "Provide at least three diverse testcases with exact outputs.",
                 "Reference code reads stdin and writes stdout, without files/network/shell.",
                 "Include at least one syntactically valid typical wrong solution.",
+                "Nonempty explicit settings override conflicting prompt or revision feedback.",
+                "Infer unspecified knowledge, difficulty, type and limits from the user prompt.",
+                "When previous_draft is present, modify that complete version using feedback. "
+                "Preserve content unrelated to the requested change, including manual edits.",
                 (
                     "Empty optional algorithm or data-scale fields mean you must choose "
                     "reasonable values consistent with the requested knowledge and difficulty."

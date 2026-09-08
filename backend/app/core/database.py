@@ -230,6 +230,38 @@ class Database:
                     "ALTER TABLE submissions ADD COLUMN "
                     "statistics_excluded INTEGER NOT NULL DEFAULT 0"
                 )
+            cursor = await connection.execute("PRAGMA table_info(agent_tasks)")
+            task_columns = {row[1] for row in await cursor.fetchall()}
+            for name, declaration in (
+                ("record_id", "TEXT"),
+                ("base_task_id", "TEXT"),
+                ("operation", "TEXT NOT NULL DEFAULT 'generate'"),
+                ("feedback", "TEXT NOT NULL DEFAULT ''"),
+                ("effective_requirements_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                if name not in task_columns:
+                    await connection.execute(
+                        f"ALTER TABLE agent_tasks ADD COLUMN {name} {declaration}"
+                    )
+            # Walk legacy parent links without loading the large generated payloads.
+            await connection.execute("""
+                WITH RECURSIVE roots(task_id, record_id) AS (
+                    SELECT task_id, task_id FROM agent_tasks WHERE parent_task_id IS NULL
+                    UNION ALL
+                    SELECT t.task_id, r.record_id FROM agent_tasks t
+                    JOIN roots r ON t.parent_task_id = r.task_id
+                )
+                UPDATE agent_tasks SET record_id = COALESCE(
+                    (SELECT record_id FROM roots WHERE roots.task_id = agent_tasks.task_id),
+                    task_id
+                ), base_task_id = parent_task_id,
+                operation = CASE WHEN parent_task_id IS NULL THEN 'generate' ELSE 'refine' END
+                WHERE record_id IS NULL
+            """)
+            await connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_record ON agent_tasks"
+                "(user_id, record_id, created_at DESC)"
+            )
             await connection.commit()
 
     async def migrate_agent_config(self) -> None:
@@ -283,10 +315,22 @@ class Database:
     async def reset(self) -> None:
         """Remove application records in foreign-key order, retaining the schema."""
         tables = (
-            "agent_imports", "agent_model_calls", "agent_events", "agent_tasks", "agent_config",
-            "audit_logs", "submission_testcases", "submissions", "problem_log_visibility",
-            "problem_bank_items", "problem_banks", "auth_bridge_tickets", "auth_bridges",
-            "sessions", "users", "languages",
+            "agent_imports",
+            "agent_model_calls",
+            "agent_events",
+            "agent_tasks",
+            "agent_config",
+            "audit_logs",
+            "submission_testcases",
+            "submissions",
+            "problem_log_visibility",
+            "problem_bank_items",
+            "problem_banks",
+            "auth_bridge_tickets",
+            "auth_bridges",
+            "sessions",
+            "users",
+            "languages",
         )
         async with self.connect() as connection:
             await connection.execute("BEGIN IMMEDIATE")

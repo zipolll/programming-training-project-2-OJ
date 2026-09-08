@@ -31,7 +31,7 @@ def clear_auth(state: MutableMapping[str, Any] | None = None) -> None:
     target = _state(state)
     target[AUTH_USER_KEY] = None
     for key in list(target):
-        if key.startswith("bank_"):
+        if key.startswith(("bank_", "agent_")):
             del target[key]
 
 

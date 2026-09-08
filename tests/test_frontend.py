@@ -688,22 +688,20 @@ def test_agent_task_overview_groups_populated_optional_fields() -> None:
 def test_agent_renders_only_selected_view(
     monkeypatch: pytest.MonkeyPatch, selected_view: str, expected: str
 ) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from frontend.pages import agent_workspace
+
     rendered: list[str] = []
-    monkeypatch.setattr(agent_page, "page_header", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agent_page, "badges", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        agent_page.st,
-        "segmented_control",
-        lambda *_args, **_kwargs: selected_view,
-    )
     monkeypatch.setattr(agent_page, "_config", lambda _api: rendered.append("config"))
     monkeypatch.setattr(
-        agent_page, "_authoring_form", lambda _api: rendered.append("authoring")
+        agent_workspace, "authoring_form", lambda _api: rendered.append("authoring")
     )
-    monkeypatch.setattr(agent_page, "_task_monitor", lambda _api: rendered.append("tasks"))
-
-    agent_page.render_agent(object())  # type: ignore[arg-type]
-
+    monkeypatch.setattr(agent_workspace, "task_monitor", lambda _api: rendered.append("tasks"))
+    app = AppTest.from_string("from frontend.pages.agent import render_agent\nrender_agent(None)")
+    app.query_params["agent_active_view"] = selected_view
+    app.run()
+    assert not app.exception
     assert rendered == [expected]
 
 
@@ -1115,7 +1113,9 @@ def test_agent_currency_uses_common_and_custom_options() -> None:
 
 
 def test_agent_problem_type_uses_common_and_custom_options() -> None:
-    assert agent_page.PROBLEM_TYPES == [
+    from frontend.pages import agent_workspace
+
+    assert agent_workspace.PROBLEM_TYPES == [
         "基础编程",
         "算法设计",
         "数据结构",
@@ -1124,19 +1124,12 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
         "图论",
         "动态规划",
     ]
-    source = Path(agent_page.__file__).read_text(encoding="utf-8")
-    assert "[*DIFFICULTY_LEVELS, OTHER_OPTION]" in source
-    assert "[*PROBLEM_TYPES, OTHER_OPTION]" in source
-    assert '"其它难度"' in source
-    assert '"其它题型"' in source
-    assert 'with st.expander("高级设置（选填）")' in source
-    assert re.search(r'"期望算法或复杂度",\s+placeholder=OPTIONAL_PLACEHOLDER', source)
     assert agent_page.VIEW_LOADING_TEXT == {
         "模型配置": "正在加载模型配置...",
-        "创建任务": "正在加载命题选项...",
-        "进度与结果": "正在加载任务进度...",
+        "新建出题": "正在加载命题选项...",
+        "出题记录": "正在加载出题记录...",
+        "任务详情": "正在加载任务进度...",
     }
-    assert 'with st.expander("验证报告", expanded=False)' in source
 
 
 def test_status_badges_use_distinct_accessible_classes(

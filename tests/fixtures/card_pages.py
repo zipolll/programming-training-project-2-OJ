@@ -36,6 +36,7 @@ pages = [
     "编辑题目",
     "模型配置",
     "AI 命题",
+    "AI 记录",
     "AI 结果",
     "AI 异常",
     "AI 进度",
@@ -74,10 +75,16 @@ elif page in {"普通命题", "编辑题目"}:
 elif page == "模型配置":
     agent._config(api)
 elif page == "AI 命题":
-    agent._authoring_form(api)
+    from frontend.pages.agent_workspace import authoring_form
+    authoring_form(AgentPreviewApi())
+elif page == "AI 记录":
+    from frontend.pages.agent_workspace import record_list
+    record_list(AgentPreviewApi())
 elif page in {"AI 结果", "AI 异常", "AI 进度"}:
     scenario = {"AI 结果": "success", "AI 异常": "error", "AI 进度": "running"}[page]
-    agent._task_monitor(AgentPreviewApi(scenario))
+    from frontend.pages.agent_workspace import task_monitor
+    st.session_state.setdefault("agent_task_id", "fixture-2")
+    task_monitor(AgentPreviewApi(scenario))
 elif page == "语言注册":
     languages.render_language_registration(api)
 elif page == "代码提交":

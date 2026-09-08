@@ -44,6 +44,27 @@ GLOBAL_CSS = r"""
 [data-testid="stCaptionContainer"] p { color: var(--oj-muted); font-size: 14px; }
 [data-testid="stHeaderActionElements"], a.anchor-link { display: none !important; }
 
+/* AI authoring keeps the prompt central and the generated problem readable. */
+.st-key-oj_agent_composer {
+  background: var(--oj-surface); border: 1px solid var(--oj-line);
+  border-top: 3px solid var(--oj-primary); border-radius: 12px;
+  padding: 1.5rem; margin: .5rem 0 1rem;
+}
+.st-key-oj_agent_composer textarea {
+  font-size: 17px; line-height: 1.8; background: var(--oj-surface);
+}
+.st-key-oj_agent_conversation {
+  border: 1px solid var(--oj-line); background: var(--oj-surface); border-radius: 10px;
+}
+.st-key-agent_view_content [data-testid="stChatMessage"] {
+  background: transparent; padding: .65rem .5rem;
+}
+[class*="_conditions"] button { border-radius: 18px; }
+.st-key-agent_nav_selection { margin-bottom: 1rem; }
+@media (max-width: 700px) {
+  .st-key-oj_agent_composer { padding: 1rem; }
+}
+
 /* Existing native navigation remains the only navigation control. */
 [data-testid="stSidebar"] {
   background: var(--oj-surface); border-right: 1px solid var(--oj-line);
