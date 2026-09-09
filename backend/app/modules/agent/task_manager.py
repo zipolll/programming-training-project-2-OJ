@@ -17,7 +17,7 @@ from backend.app.modules.agent.models import (
     GeneratedProblem,
     ValidationReport,
 )
-from backend.app.modules.agent.repository import AgentRepository, utc_now
+from backend.app.modules.agent.repository import AgentRepository, RecordBusyError, utc_now
 from backend.app.modules.agent.tools import AgentTools
 from backend.app.modules.problems.service import ProblemService
 
@@ -43,6 +43,9 @@ def apply_requested_metadata(
 
 
 logger = logging.getLogger(__name__)
+
+# Total wall-clock allowance, including time spent waiting in the persistent queue.
+TASK_TIME_LIMIT_SECONDS = 240.0
 
 STAGES = (
     ("requirement_analysis", 5),
@@ -86,6 +89,9 @@ class AgentTaskManager:
         self._worker: asyncio.Task[None] | None = None
         self._active: dict[str, asyncio.Task[Any]] = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
+        self._deadlines: dict[str, asyncio.Task[None]] = {}
+        self._expired: set[str] = set()
+        self._validation_lock = asyncio.Lock()
         self._accepting = False
 
     async def start(self) -> None:
@@ -99,6 +105,9 @@ class AgentTaskManager:
 
     async def stop(self) -> None:
         self._accepting = False
+        for deadline in self._deadlines.values():
+            deadline.cancel()
+        await asyncio.gather(*self._deadlines.values(), return_exceptions=True)
         for operation in tuple(self._active.values()):
             operation.cancel()
         await asyncio.gather(*self._active.values(), return_exceptions=True)
@@ -111,6 +120,8 @@ class AgentTaskManager:
         self._queue = asyncio.Queue()
         self._active.clear()
         self._cancel_events.clear()
+        self._deadlines.clear()
+        self._expired.clear()
 
     async def create(self, user_id: int, request: AuthoringRequest) -> str:
         if request.existing_problem_id:
@@ -167,7 +178,9 @@ class AgentTaskManager:
             raise LookupError("agent task not found")
         if parent.status not in {AgentStatus.ERROR, AgentStatus.CANCELLED}:
             raise ValueError("只有失败或已停止的任务可以重试。")
-        validating = parent.operation == "validate"
+        validating = parent.validation_only or parent.operation == "validate"
+        if validating:
+            return await self.validate_version(user_id, task_id)
         config = None if validating else await self.model_client.configuration(user_id)
         new_id = str(uuid4())
         await self.repository.create_task(
@@ -200,6 +213,13 @@ class AgentTaskManager:
         candidate = generated or previous
         if candidate is None:
             raise ValueError("尚无可验证或编辑的题目。")
+        if generated is None:
+            return await self.validate_version(user_id, task_id) if validate else task_id
+        records = await self.repository.record_versions(user_id, parent.record_id)
+        if any(row["status"] in ("pending", "running") for row in records):
+            raise RecordBusyError("此记录已有正在运行的任务，请等待完成或停止任务。")
+        if candidate == previous:
+            return await self.validate_version(user_id, task_id) if validate else task_id
         requirements = parent.request
         if generated is not None and previous is not None:
             changes = {}
@@ -217,32 +237,80 @@ class AgentTaskManager:
                 }
             )
         new_id = str(uuid4())
-        await self.repository.create_task(
+        saved = await self.repository.create_task(
             new_id,
             user_id,
             requirements,
             parent_task_id=task_id,
             base_task_id=task_id,
-            operation="validate" if validate else "edit",
+            operation="edit",
             generated=candidate,
-            queued=validate,
+            queued=False,
             feedback="保存手动修改并验证"
             if generated and validate
             else ("保存手动修改" if generated else "验证此版本"),
             currency=parent.currency,
         )
         if validate:
-            await self.enqueue(new_id)
-        return new_id
+            return await self.validate_version(user_id, saved.task_id)
+        return saved.task_id
+
+    async def validate_version(self, user_id: int, task_id: str) -> str:
+        async with self._validation_lock:
+            task = await self.repository.get_task(task_id)
+            if task is None or task.user_id != user_id:
+                raise LookupError("agent task not found")
+            if task_id in self._tracked and task.status not in (
+                AgentStatus.PENDING,
+                AgentStatus.RUNNING,
+            ):
+                raise RecordBusyError("上次执行正在结束，请稍后重试验证。")
+            if await self.repository.prepare_validation(task_id, user_id):
+                await self.enqueue(task_id)
+        return task_id
 
     async def enqueue(self, task_id: str) -> bool:
         if not self._accepting:
             raise RuntimeError("agent manager is not accepting tasks")
         if task_id in self._tracked:
             return False
+        task = await self.repository.get_task(task_id)
+        if task is None or task.status is not AgentStatus.PENDING:
+            return False
         self._tracked.add(task_id)
+        queued_at = task.execution_queued_at or task.created_at
+        remaining = TASK_TIME_LIMIT_SECONDS - (utc_now() - queued_at).total_seconds()
+        self._deadlines[task_id] = asyncio.create_task(
+            self._expire_after(task_id, max(0.0, remaining)), name=f"agent-deadline-{task_id}"
+        )
         self._queue.put_nowait(task_id)
         return True
+
+    async def _expire_after(self, task_id: str, remaining: float) -> None:
+        await asyncio.sleep(remaining)
+        self._expired.add(task_id)
+        operation = self._active.get(task_id)
+        if operation is not None:
+            operation.cancel()
+        message = "已达到 4 分钟总时限，任务已停止；已有草稿和验证结果已保留。"
+        changed = await self.repository.update_task(
+            task_id,
+            status=AgentStatus.ERROR,
+            stage="error",
+            progress=100,
+            error_code="task_timeout",
+            safe_error_message=message,
+            finished_at=utc_now(),
+            usage_estimated=True,
+        )
+        if changed:
+            await self.repository.add_event(
+                task_id,
+                "error",
+                "error",
+                message + "中断请求的未返回用量无法结算，费用以服务商账单为准。",
+                100,
+            )
 
     async def cancel(self, task_id: str, user_id: int, *, is_admin: bool = False) -> None:
         task = await self.repository.get_task(task_id)
@@ -266,7 +334,11 @@ class AgentTaskManager:
             task_id = await self._queue.get()
             try:
                 task = await self.repository.get_task(task_id)
-                if task is None or task.status is not AgentStatus.PENDING:
+                if (
+                    task is None
+                    or task.status is not AgentStatus.PENDING
+                    or task_id in self._expired
+                ):
                     continue
                 event = self._cancel_events.setdefault(task_id, asyncio.Event())
                 if task.cancellation_requested or event.is_set():
@@ -277,7 +349,9 @@ class AgentTaskManager:
                 try:
                     await operation
                 except asyncio.CancelledError:
-                    if event.is_set():
+                    if task_id in self._expired:
+                        await self._deadlines[task_id]
+                    elif event.is_set():
                         await self._set_cancelled(task_id)
                     else:
                         raise
@@ -287,6 +361,13 @@ class AgentTaskManager:
                 logger.exception("Unexpected agent worker failure for task %s", task_id)
                 await self._fail(task_id, "internal_error", "Agent task failed safely")
             finally:
+                deadline = self._deadlines.pop(task_id, None)
+                if deadline is not None:
+                    # An expiring queued task must finish persisting its timeout.
+                    if task_id not in self._expired:
+                        deadline.cancel()
+                    await asyncio.gather(deadline, return_exceptions=True)
+                self._expired.discard(task_id)
                 self._active.pop(task_id, None)
                 self._cancel_events.pop(task_id, None)
                 self._tracked.discard(task_id)
@@ -303,7 +384,7 @@ class AgentTaskManager:
             started_at=utc_now(),
         )
         try:
-            if task.operation == "validate":
+            if task.validation_only or task.operation == "validate":
                 assert task.draft is not None
                 await self._stage(task_id, "execute_reference", 62, "正在验证已保存的题目")
                 report = await self.tools.build_validation_report(task.draft)
@@ -358,7 +439,7 @@ class AgentTaskManager:
                 None,
                 task.feedback,
             )
-            await self.repository.update_task(task_id, draft_json=generated)
+            await self.repository.store_draft(task_id, generated)
             await self.repository.update_task(
                 task_id,
                 effective_requirements_json=self._effective(generated, task.request),
@@ -425,7 +506,7 @@ class AgentTaskManager:
                     report,
                     task.feedback,
                 )
-                await self.repository.update_task(task_id, draft_json=generated)
+                await self.repository.store_draft(task_id, generated)
             assert report is not None
             self._check(cancelled)
             await self.repository.update_task(
@@ -480,7 +561,12 @@ class AgentTaskManager:
             "validation_failures": report.blocking_errors if report else [],
             "rules": [
                 "Return exactly the GeneratedProblem schema; no markdown.",
+                "Keep explanations concise and test data compact while preserving requested "
+                "coverage and all constraints. Produce a complete result with concise reasoning.",
                 "Provide at least three diverse testcases with exact outputs.",
+                "Unless the user specifies a testcase count, supply 5 compact, distinct cases. "
+                "Use exactly one typical wrong solution. Avoid verbose repeated explanations "
+                "and huge literal test arrays; use small targeted cases that expose mistakes.",
                 "Reference code reads stdin and writes stdout, without files/network/shell.",
                 "Include at least one syntactically valid typical wrong solution.",
                 "Nonempty explicit settings override conflicting prompt or revision feedback.",

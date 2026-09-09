@@ -1,5 +1,6 @@
 """Fixed, bounded tool registry for the authoring agent."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -44,14 +45,14 @@ class AgentTools:
         self.problem_service = problem_service
         self.language_service = language_service
         self.settings = settings
+        self._judge_slots = asyncio.Semaphore(2)
 
     async def search_problem_bank(
         self, terms: list[str], difficulty: str, limit: int = 5
     ) -> list[dict[str, Any]]:
         query = {item.casefold() for item in terms if item.strip()}
         scored = []
-        for summary in await self.problem_service.list_problems():
-            problem = await self.problem_service.get_problem(summary.id)
+        for problem in await self.problem_service.list_problems():
             haystack = {problem.title.casefold(), problem.difficulty.casefold()}
             haystack.update(tag.casefold() for tag in problem.tags)
             same_difficulty = problem.difficulty.casefold() == difficulty.casefold()
@@ -59,6 +60,9 @@ class AgentTools:
             if score:
                 scored.append((score, problem))
         scored.sort(key=lambda item: (-item[0], item[1].id))
+        selected = [
+            await self.problem_service.get_problem(item.id) for _, item in scored[: min(limit, 10)]
+        ]
         return [
             {
                 "id": item.id,
@@ -67,7 +71,7 @@ class AgentTools:
                 "tags": item.tags[:10],
                 "description_excerpt": item.description[:300],
             }
-            for _, item in scored[: min(limit, 10)]
+            for item in selected
         ]
 
     @staticmethod
@@ -148,9 +152,50 @@ class AgentTools:
 
     async def build_validation_report(self, generated: GeneratedProblem) -> ValidationReport:
         schema = await self.validate_problem_schema(generated.problem.model_dump(mode="json"))
-        samples = await self.validate_sample_outputs(generated)
-        tests = await self.validate_testcases(generated)
-        counterexamples = await self.evaluate_counterexamples(generated)
+        # Compile the reference once and reuse identical sample/test input-output pairs.
+        cases = list(generated.problem.testcases)
+        sample_indexes = []
+        for sample in generated.problem.samples:
+            case = Testcase(input=sample.input, output=sample.output)
+            if case not in cases:
+                cases.append(case)
+            sample_indexes.append(cases.index(case))
+        jobs = [
+            asyncio.create_task(
+                self.execute_reference_solution(
+                    generated,
+                    generated.problem.model_copy(update={"testcases": cases}),
+                )
+            ),
+            asyncio.create_task(self.evaluate_counterexamples(generated)),
+        ]
+        try:
+            reference, counterexamples = await asyncio.gather(*jobs)
+        finally:
+            for job in jobs:
+                if not job.done():
+                    job.cancel()
+            await asyncio.gather(*jobs, return_exceptions=True)
+
+        def subset(indexes):
+            results = [
+                reference["testcases"][i] for i in indexes if i < len(reference["testcases"])
+            ]
+            passed = len(results) == len(indexes) and all(r["result"] == "AC" for r in results)
+            return {
+                "status": "AC"
+                if passed
+                else reference["status"]
+                if reference["status"] != "AC"
+                else "UNK",
+                "testcases": results,
+                "compile_info": reference["compile_info"],
+            }
+
+        samples = subset(sample_indexes)
+        samples["consistent"] = samples["status"] == "AC"
+        tests = subset(list(range(len(generated.problem.testcases))))
+        tests["all_passed"] = tests["status"] == "AC"
         coverage = await self.analyze_test_coverage(generated.problem)
         blocking = []
         if not schema["valid"]:
@@ -193,6 +238,10 @@ class AgentTools:
         )
 
     async def _judge(self, problem: Problem, language: str, code: str):
+        async with self._judge_slots:
+            return await self._judge_with_slot(problem, language, code)
+
+    async def _judge_with_slot(self, problem: Problem, language: str, code: str):
         with tempfile.TemporaryDirectory(prefix="oj-agent-problems-") as directory:
             service = ProblemService(ProblemRepository(Path(directory)))
             await service.initialize()

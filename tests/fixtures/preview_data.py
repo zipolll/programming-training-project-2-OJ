@@ -26,6 +26,13 @@ class AgentPreviewApi:
     """Offline production-shape records for visual and interaction checks."""
 
     base_url = "http://offline-agent"
+    long_prompt = (
+        "# 题目描述\n\n光谱仪会同时记录样本信号和仪器自身的背景读数。"
+        "为了比较样本真正产生的信号，需要先从测量值中扣除背景。\n\n"
+        "本题有 n 个样本和 m 个通道：\n- samp 表示样本数据\n- background 表示背景数据\n\n"
+        "请使用 NumPy 广播计算校正结果，并解释维度和边界情况。"
+        "<script>不要执行这段测试文本</script>\n" + "还需要清晰的输入输出说明与测试点。" * 12
+    )
 
     def __init__(self, status="success"):
         self.status = status
@@ -44,10 +51,11 @@ class AgentPreviewApi:
                 version = {k: v for k, v in task.items() if k not in (
                     "request", "draft", "final_problem", "validation_report"
                 )}
-                version.update(title=PROBLEM["title"], difficulty="中等", prompt="出一道词频统计题",
+                generated = task.get("final_problem") or task.get("draft")
+                version.update(title=generated["problem"]["title"] if generated else "",
+                               difficulty="中等", prompt=task["request"].get("prompt", ""),
                                knowledge='["字符串", "哈希表"]',
-                               has_content=revision == 1 or self.status == "success",
-                               usable=revision == 1 or self.status == "success")
+                               has_content=bool(generated), usable=bool(task.get("final_problem")))
                 versions.append(version)
             from backend.app.modules.agent.repository import AgentRepository
             record = AgentRepository.summarize_record(versions)
@@ -59,9 +67,16 @@ class AgentPreviewApi:
         raise AssertionError(f"Unexpected fixture request: {path}")
 
     def task(self, revision):
-        status = "success" if revision == 1 else self.status
+        status = (
+            "cancelled" if self.status == "cancelled" else
+            "success" if revision == 1 or self.status == "long_title" else self.status
+        )
         generated = {
-            "problem": PROBLEM, "solution_explanation": "使用字典累计词频后排序。",
+            "problem": {
+                **PROBLEM,
+                "title": ("超长题目标题与维度广播校正" * 12 + " <b>纯文本</b>")
+                if self.status == "long_title" else PROBLEM["title"],
+            }, "solution_explanation": "使用字典累计词频后排序。",
             "complexity_analysis": "O(n log n)",
             "reference_solution": (
                 "from collections import Counter\nprint(Counter(input().split()))"
@@ -84,7 +99,8 @@ class AgentPreviewApi:
             "safe_error_message": "模型服务暂时不可用，请稍后重试。" if status == "error" else None,
             "imported_problem_id": None,
             "request": {
-                "prompt": "出一道校园热搜词统计题，考查哈希表和排序。", "difficulty": "中等",
+                "prompt": self.long_prompt if self.status in ("cancelled", "long_title") else
+                "出一道校园热搜词统计题，考查哈希表和排序。", "difficulty": "中等",
                 "problem_type": "算法设计", "required_knowledge": ["字符串", "哈希表"],
             },
             "final_problem": generated if status == "success" else None, "draft": None,

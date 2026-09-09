@@ -114,7 +114,7 @@ def test_agent_config_defaults_allow_large_structured_problem_output() -> None:
         provider_url="https://model.example/v1",
         model_name="test-model",
     )
-    assert config.request_timeout == 360.0
+    assert config.request_timeout == 180.0
     assert config.max_output_tokens == 50000
 
 
@@ -233,6 +233,7 @@ def test_manual_version_validation_import_and_refine_base(agent_client):
     calls_before = len(requests)
     validating = client.post(f"/api/agent/tasks/{manual_id}/validate").json()["data"]["task_id"]
     validated = wait_terminal(client, validating)
+    assert validating == manual_id and validated["revision"] == manual["revision"]
     assert validated["status"] == "success"
     assert len(requests) == calls_before  # Validation never calls the model or rewrites content.
     assert validated["final_problem"] == edited
@@ -255,8 +256,8 @@ def test_manual_version_validation_import_and_refine_base(agent_client):
     assert prompt["revision_feedback"] == "增加一个样例"
     assert revised["base_task_id"] == manual_id
     record = client.get(f"/api/agent/records/{original['record_id']}").json()["data"]
-    assert record["version_count"] == 4 and record["imported_problem_id"] == "AI_SUM_1"
-    assert len({v["revision"] for v in record["versions"]}) == 4
+    assert record["version_count"] == 3 and record["imported_problem_id"] == "AI_SUM_1"
+    assert len({v["revision"] for v in record["versions"]}) == 3
     assert (
         client.get(f"/api/agent/tasks/{tid}").json()["data"]["final_problem"]
         == original["final_problem"]
@@ -291,8 +292,125 @@ def test_failed_manual_validation_preserves_content_and_last_success(agent_clien
     assert records[0]["usable_task_id"] == original["task_id"]
     retried = client.post(f"/api/agent/tasks/{task['task_id']}/retry").json()["data"]["task_id"]
     retry = wait_terminal(client, retried)
+    assert retried == task["task_id"] and retry["revision"] == task["revision"]
     assert retry["draft"] == edited and retry["status"] == "error"
     assert len(requests) == before
+
+
+def test_unchanged_saves_and_duplicate_validation_do_not_create_versions(agent_client):
+    client, _, requests = agent_client
+    original = _new_success(client)
+    tid = original["task_id"]
+    calls = len(requests)
+    for payload in (
+        {"generated": original["final_problem"]},
+        {"generated": original["final_problem"], "validate": True},
+    ):
+        response = client.post(f"/api/agent/tasks/{tid}/versions", json=payload)
+        assert response.json()["data"] == {"task_id": tid, "status": "success"}
+    response = client.post(f"/api/agent/tasks/{tid}/validate")
+    assert response.json()["data"] == {"task_id": tid, "status": "success"}
+    edited = deepcopy(original["final_problem"])
+    edited["problem"]["title"] = "改动后的标题"
+    first = client.post(f"/api/agent/tasks/{tid}/versions", json={"generated": edited}).json()[
+        "data"
+    ]
+    duplicate = client.post(f"/api/agent/tasks/{tid}/versions", json={"generated": edited}).json()[
+        "data"
+    ]
+    assert first == duplicate and first["status"] == "draft"
+    record = client.get(f"/api/agent/records/{tid}").json()["data"]
+    assert record["version_count"] == 2 and len(record["attempts"]) == 2
+    assert len(requests) == calls
+
+
+def test_validation_claim_is_atomic_and_old_version_gets_fresh_execution_budget(
+    agent_client, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client, database, requests = agent_client
+    original = _new_success(client)
+    edited = deepcopy(original["final_problem"])
+    edited["problem"]["title"] = "旧的待验证版本"
+    tid = client.post(
+        f"/api/agent/tasks/{original['task_id']}/versions", json={"generated": edited}
+    ).json()["data"]["task_id"]
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE agent_tasks SET created_at='2020-01-01T00:00:00+00:00' WHERE task_id=?", (tid,)
+        )
+    tools = client.app.state.agent_task_manager.tools
+    original_validate = tools.build_validation_report
+    calls = []
+
+    async def delayed_validate(generated):
+        calls.append(generated)
+        await asyncio.sleep(0.5)
+        return await original_validate(generated)
+
+    monkeypatch.setattr(tools, "build_validation_report", delayed_validate)
+    before = len(requests)
+    with ThreadPoolExecutor(2) as pool:
+        responses = list(
+            pool.map(lambda _: client.post(f"/api/agent/tasks/{tid}/validate"), range(2))
+        )
+    assert all(r.status_code == 200 and r.json()["data"]["task_id"] == tid for r in responses)
+    result = wait_terminal(client, tid)
+    assert result["status"] == "success" and result["revision"] == 2
+    assert result["created_at"].startswith("2020") and not result["execution_queued_at"].startswith(
+        "2020"
+    )
+    assert len(calls) == 1 and len(requests) == before
+    record = client.get(f"/api/agent/records/{original['task_id']}").json()["data"]
+    assert record["version_count"] == 2
+
+
+def test_combined_reference_validation_reuses_samples_and_keeps_evidence(agent_client, monkeypatch):
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    original_judge = tools._judge
+    calls = []
+
+    async def counted(problem, language, code):
+        calls.append((code, len(problem.testcases)))
+        return await original_judge(problem, language, code)
+
+    monkeypatch.setattr(tools, "_judge", counted)
+    generated = GeneratedProblem.model_validate(generated_problem())
+    report = client.portal.call(tools.build_validation_report, generated)
+    assert report.reference_all_passed and report.samples_consistent
+    assert len(calls) == 2 and all(count == 4 for _, count in calls)
+    generated.problem.samples[0].output = "999\n"
+    report = client.portal.call(tools.build_validation_report, generated)
+    assert report.reference_all_passed and not report.samples_consistent
+
+
+def test_cancelling_parallel_validation_cleans_up_both_jobs(agent_client, monkeypatch):
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    stopped = []
+
+    async def slow(*args, **kwargs):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            stopped.append(True)
+
+    monkeypatch.setattr(tools, "execute_reference_solution", slow)
+    monkeypatch.setattr(tools, "evaluate_counterexamples", slow)
+
+    async def run():
+        task = asyncio.create_task(
+            tools.build_validation_report(GeneratedProblem.model_validate(generated_problem()))
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    client.portal.call(run)
+    assert len(stopped) == 2
 
 
 def test_retry_uses_same_base_and_new_configuration(agent_client):
@@ -365,9 +483,11 @@ def test_record_serializes_concurrent_requests_and_is_owner_isolated(agent_clien
 def test_legacy_record_backfill_is_idempotent(agent_client):
     client, path, _ = agent_client
     original = _new_success(client)
+    edited = deepcopy(original["final_problem"])
+    edited["problem"]["title"] = "旧版任务的修改"
     child_id = client.post(
         f"/api/agent/tasks/{original['task_id']}/versions",
-        json={"generated": original["final_problem"]},
+        json={"generated": edited},
     ).json()["data"]["task_id"]
     with sqlite3.connect(path) as db:
         db.execute("UPDATE agent_tasks SET record_id=NULL")
@@ -408,15 +528,17 @@ def test_authoring_drafts_are_cleared_when_changing_account():
     from frontend.session import set_auth_user
 
     state = {
-        'auth_user': {'id': 1}, 'agent_new_draft': {'prompt': 'private requirements'},
-        'agent_editor_old_title': 'private title', 'agent_create_submission': {'id': 'private'},
+        "auth_user": {"id": 1},
+        "agent_new_draft": {"prompt": "private requirements"},
+        "agent_editor_old_title": "private title",
+        "agent_create_submission": {"id": "private"},
     }
-    set_auth_user({'id': 2}, state)
-    assert state == {'auth_user': {'id': 2}}
+    set_auth_user({"id": 2}, state)
+    assert state == {"auth_user": {"id": 2}}
 
 
 def test_legacy_requirement_controls_preserve_small_counts_and_deleted_source():
-    app = AppTest.from_string('''
+    app = AppTest.from_string("""
 from frontend.pages.agent_workspace import requirement_inputs
 class Api:
     base_url = "http://legacy-agent-fixture"
@@ -426,11 +548,11 @@ requirement_inputs(Api(), "legacy", {
     "prompt": "历史任务", "testcase_count": 1,
     "adapt_existing": True, "existing_problem_id": "deleted-source",
 })
-''').run()
+""").run()
     assert not app.exception
-    assert app.number_input(key='legacy_testcase_count').value == 1
-    assert app.selectbox(key='legacy_existing_problem_id').value == 'deleted-source'
-    assert any('原改编题目已不可用' in warning.value for warning in app.warning)
+    assert app.number_input(key="legacy_testcase_count").value == 1
+    assert app.selectbox(key="legacy_existing_problem_id").value == "deleted-source"
+    assert any("原改编题目已不可用" in warning.value for warning in app.warning)
 
 
 def _ui(client, task_id=None):
@@ -450,7 +572,8 @@ def test_ui_prompt_settings_clear_and_history_navigation(agent_client):
     app = _ui(client).run()
     assert not app.exception
     assert app.number_input(key="agent_new_initial_time_limit").value is None
-    app.button(key="agent_new_initial_example_算法入门").click().run()
+    assert not any("example_" in (button.key or "") for button in app.button)
+    app.text_area(key="agent_new_initial_prompt").set_value("出一道二分查找题").run()
     assert "二分查找" in app.text_area(key="agent_new_initial_prompt").value
     app.selectbox(key="agent_new_initial_difficulty").select("困难").run()
     assert app.session_state["agent_new_draft"]["difficulty"] == "困难"
@@ -465,6 +588,7 @@ def test_ui_prompt_settings_clear_and_history_navigation(agent_client):
     app.query_params["agent_active_view"] = "出题记录"
     app.run()
     assert not app.exception
+    assert not any(b.label in ("修改", "重试", "修改要求后重试") for b in app.button)
     app.button(key=f"agent_open_{task['record_id']}").click().run()
     assert not app.exception
     assert app.query_params["agent_task_id"] == [tid]
@@ -497,11 +621,89 @@ def test_ui_manual_edit_save_switch_versions_and_narrow_panes(agent_client, monk
     )
     app.run()
     assert not app.exception
+    assert not any(t.label == "继续修改" for t in app.text_area)
+    next(b for b in app.button if b.label == "AI 修改").click().run()
     assert any(t.label == "继续修改" for t in app.text_area)
-    app.session_state["agent_compact_pane"] = "题目"
-    app.run()
+    next(b for b in app.button if b.label == "返回题目").click().run()
     assert not app.exception
     assert not any(t.label == "继续修改" for t in app.text_area)
+    next(b for b in app.button if b.label == "验证题目").click().run()
+    assert not app.exception and app.query_params["agent_task_id"] == [manual_id]
+    validated = wait_terminal(client, manual_id)
+    assert validated["status"] == "success" and validated["revision"] == manual["revision"]
+    app.run()
+    assert not app.exception
+    assert any(b.label == "导入题目" for b in app.button)
+    assert len(app.selectbox(key="agent_version_selection").options) == 2
+
+
+def test_record_display_status_filters_latest_version_before_pagination(agent_client):
+    client, _, _ = agent_client
+    task = _new_success(client)
+    tid = task["task_id"]
+
+    def records(state, **extra):
+        response = client.get("/api/agent/records", params={"display_status": state, **extra})
+        assert response.status_code == 200
+        return response.json()["data"]
+
+    assert records("success")["total"] == 1
+    assert records("imported")["total"] == 0
+    assert client.post(f"/api/agent/tasks/{tid}/import", json={"confirm": True}).status_code == 200
+    imported = records("imported")
+    assert imported["items"][0]["display_status"] == "imported"
+    assert imported["items"][0]["status"] == "success"
+    assert records("success")["total"] == 0
+    assert (
+        client.get("/api/agent/records", params={"status": "success"}).json()["data"]["total"] == 1
+    )
+    # Historical import must not hide a newer unvalidated or failed version.
+    invalid = deepcopy(task["final_problem"])
+    invalid["problem"]["testcases"][0]["output"] = "999\n"
+    manual = client.post(f"/api/agent/tasks/{tid}/versions", json={"generated": invalid}).json()[
+        "data"
+    ]
+    assert records("draft")["total"] == 1
+    assert records("imported")["total"] == 0
+    validating = client.post(f"/api/agent/tasks/{manual['task_id']}/validate").json()["data"]
+    assert wait_terminal(client, validating["task_id"])["status"] == "error"
+    assert records("error")["total"] == 1
+    assert records("error")["items"][0]["imported_problem_id"]
+    assert records("error", page=2, page_size=1)["total"] == 1
+    assert records("error", page=2, page_size=1)["items"] == []
+    assert client.get("/api/agent/records", params={"display_status": "invalid"}).status_code == 400
+
+
+def test_ui_detail_focus_editor_cancel_and_import_dialog(agent_client):
+    client, _, _ = agent_client
+    task = _new_success(client)
+    app = _ui(client, task["task_id"]).run()
+
+    def click(label):
+        next(b for b in app.button if b.label == label).click().run()
+        assert not app.exception
+
+    assert not app.exception
+    assert not app.get("progress")
+    assert not any(t.label == "继续修改" for t in app.text_area)
+    assert not any(c.label == "我已审阅题面、参考解法和验证结果" for c in app.checkbox)
+    click("AI 修改")
+    assert any(t.label == "继续修改" for t in app.text_area)
+    click("手动编辑")
+    assert not any(t.label == "继续修改" for t in app.text_area)
+    assert [tab.label for tab in app.tabs] == ["题面与样例", "分类与限制", "解法与测试"]
+    prefix = f"agent_editor_{task['task_id']}"
+    app.text_input(key=f"{prefix}_title").set_value("不保存这个标题")
+    click("取消编辑")
+    click("手动编辑")
+    assert app.text_input(key=f"{prefix}_title").value == task["final_problem"]["problem"]["title"]
+    click("取消编辑")
+    click("导入题目")
+    assert next(b for b in app.button if b.label == "确认导入").disabled
+    app.checkbox(key=f"agent_confirm_{task['task_id']}").check().run()
+    click("确认导入")
+    assert app.get("link_button")
+    assert not any(b.label == "导入题目" for b in app.button)
 
 
 def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> None:
@@ -608,16 +810,25 @@ def test_agent_end_to_end_events_usage_and_idempotent_import(agent_client) -> No
     assert len(requests) == 1
 
 
-def test_refine_creates_child_revision(agent_client) -> None:
+def test_refine_with_identical_content_keeps_version_but_records_attempt(agent_client) -> None:
     client, _, _ = agent_client
     client.put("/api/agent/config", json=config_payload())
     parent_id = client.post("/api/agent/tasks", json=authoring_payload()).json()["data"]["task_id"]
     parent = wait_terminal(client, parent_id)
+    assert (
+        client.post(f"/api/agent/tasks/{parent_id}/import", json={"confirm": True}).status_code
+        == 200
+    )
     child_id = client.post(
         f"/api/agent/tasks/{parent_id}/refine", json={"feedback": "change background"}
     ).json()["data"]["task_id"]
     child = wait_terminal(client, child_id)
-    assert child["parent_task_id"] == parent_id and child["revision"] == 2
+    assert child["parent_task_id"] == parent_id and child["revision"] == parent["revision"]
+    assert child["content_version_id"] == parent_id
+    record = client.get(f"/api/agent/records/{parent_id}").json()["data"]
+    assert record["version_count"] == 1 and len(record["attempts"]) == 2
+    assert record["display_status"] == "imported"
+    assert child["imported_problem_id"] == "AI_SUM_1"
     assert (
         parent["final_problem"]
         == client.get(f"/api/agent/tasks/{parent_id}").json()["data"]["final_problem"]
@@ -772,3 +983,132 @@ def test_running_model_request_is_really_cancelled(agent_client) -> None:
         time.sleep(0.01)
     assert client.post(f"/api/agent/tasks/{task_id}/cancel").status_code == 200
     assert wait_terminal(client, task_id)["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("model", ["glm-5.3", "GLM-5.3-FLASH", "test-model"])
+def test_model_latency_policy_uses_only_supported_parameters(agent_client, model):
+    client, _, requests = agent_client
+    client.put("/api/agent/config", json=config_payload(model_name=model, request_timeout=600.0))
+    assert client.post("/api/agent/config/test").status_code == 200
+    payload = json.loads(requests[-1].content)
+    if model.lower().startswith("glm-5.3"):
+        assert payload["thinking"] == {"type": "enabled"}
+        assert payload["reasoning_effort"] == "low"
+    else:
+        assert "thinking" not in payload and "reasoning_effort" not in payload
+    assert requests[-1].extensions["timeout"]["read"] == 240.0
+
+
+def test_total_deadline_expires_queued_and_running_tasks_then_worker_recovers(
+    agent_client, monkeypatch
+):
+    from backend.app.modules.agent import task_manager
+
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload(request_timeout=600.0))
+    original = client.app.state.agent_model_client.transport
+    calls, cancelled = [], []
+
+    async def delayed(request):
+        calls.append(request)
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.append(True)
+        return httpx.Response(200, json={})
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(delayed)
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 1.0)
+    first = client.post("/api/agent/tasks", json={"prompt": "first"}).json()["data"]["task_id"]
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 0.15)
+    second = client.post("/api/agent/tasks", json={"prompt": "queued"}).json()["data"]["task_id"]
+    queued = wait_terminal(client, second)
+    assert queued["error_code"] == "task_timeout" and queued["started_at"] is None
+    assert client.get(f"/api/agent/tasks/{first}").json()["data"]["status"] == "running"
+    task = wait_terminal(client, first)
+    assert task["error_code"] == "task_timeout" and task["status"] == "error"
+    assert len(calls) == 1 and cancelled
+    assert task["cancellation_requested"] is False
+    client.app.state.agent_model_client.transport = original
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 240.0)
+    retried = client.post(f"/api/agent/tasks/{first}/retry").json()["data"]["task_id"]
+    assert wait_terminal(client, retried)["status"] == "success"
+    assert client.get(f"/api/agent/tasks/{first}").json()["data"]["error_code"] == "task_timeout"
+
+
+def test_deadline_includes_validation_preserves_draft_and_known_usage(agent_client, monkeypatch):
+    from backend.app.modules.agent import task_manager
+
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 1.0)
+    manager = client.app.state.agent_task_manager
+    cancelled = []
+
+    async def slow_validation(generated):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.append(True)
+
+    monkeypatch.setattr(manager.tools, "build_validation_report", slow_validation)
+    tid = client.post("/api/agent/tasks", json={"prompt": "test"}).json()["data"]["task_id"]
+    task = wait_terminal(client, tid)
+    assert task["error_code"] == "task_timeout" and cancelled
+    assert task["draft"] and task["final_problem"] is None
+    assert task["total_tokens"] == 150 and float(task["cost"]) > 0
+
+    async def late_success():
+        from backend.app.modules.agent.models import AgentStatus
+
+        return await manager.repository.update_task(tid, status=AgentStatus.SUCCESS)
+
+    assert client.portal.call(late_success) is False
+    assert client.get(f"/api/agent/tasks/{tid}").json()["data"]["status"] == "error"
+
+
+def test_deadline_does_not_restart_for_json_repair(agent_client, monkeypatch):
+    from backend.app.modules.agent import task_manager
+
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 1.5)
+    calls = []
+
+    async def invalid(request):
+        calls.append(request)
+        await asyncio.sleep(0.1 if len(calls) == 1 else 10)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "invalid json"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(invalid)
+    tid = client.post("/api/agent/tasks", json={"prompt": "test"}).json()["data"]["task_id"]
+    task = wait_terminal(client, tid)
+    assert task["error_code"] == "task_timeout" and len(calls) == 2
+    assert task["total_tokens"] == 150
+
+
+def test_recovered_queue_uses_original_creation_time(agent_client):
+    client, database, requests = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    manager = client.app.state.agent_task_manager
+    tid = "expired-persisted-task"
+
+    async def persist_only():
+        await manager.repository.create_task(tid, 1, AuthoringRequest(prompt="old queued request"))
+
+    client.portal.call(persist_only)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE agent_tasks SET created_at='2020-01-01T00:00:00+00:00' WHERE task_id=?",
+            (tid,),
+        )
+    client.portal.call(manager.enqueue, tid)
+    task = wait_terminal(client, tid)
+    assert task["error_code"] == "task_timeout" and not requests
+    assert task["started_at"] is None

@@ -53,7 +53,7 @@ class AgentConfigUpdate(StrictModel):
     input_price_per_million_tokens: Decimal = Field(default=Decimal("0"), ge=0, strict=False)
     output_price_per_million_tokens: Decimal = Field(default=Decimal("0"), ge=0, strict=False)
     currency: str = Field(default="USD", min_length=1, max_length=12)
-    request_timeout: float = Field(default=360.0, gt=0, le=600, allow_inf_nan=False)
+    request_timeout: float = Field(default=180.0, gt=0, le=600, allow_inf_nan=False)
     max_iterations: int = Field(default=3, ge=1, le=10)
     max_output_tokens: int = Field(default=50000, ge=256, le=128000)
 
@@ -164,6 +164,9 @@ class AgentTask(StrictModel):
     feedback: str = ""
     effective_requirements: dict[str, Any] = Field(default_factory=dict)
     revision: int
+    content_version_id: str | None = None
+    validation_only: bool = False
+    execution_queued_at: datetime | None = None
     status: AgentStatus
     stage: str
     progress: int = Field(ge=0, le=100)

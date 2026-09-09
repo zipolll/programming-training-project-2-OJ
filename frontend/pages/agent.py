@@ -156,9 +156,16 @@ def _config(api: ApiClient) -> None:
                 help="可从列表选择，也可以直接输入其他币种代码。",
             )
         with section_card("执行策略", key="agent_policy", icon="⚙️"):
+            st.caption(
+                "每次任务最多 4 分钟，包含排队、生成、修正和验证；到时停止并保留已有内容。"
+                "GLM-5.3 使用低思考强度，实际单次输出上限为 16000 Token。"
+            )
             policy_fields = st.columns(3)
             timeout = policy_fields[0].number_input(
-                "请求超时（秒）", 1.0, 600.0, float(current.get("request_timeout", 360.0))
+                "请求超时（秒）",
+                1.0,
+                240.0,
+                min(240.0, float(current.get("request_timeout", 180.0))),
             )
             iterations = policy_fields[1].number_input(
                 "最大修正轮数", 1, 10, int(current.get("max_iterations", 3))
@@ -226,15 +233,16 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
 
     if not embedded:
         page_header("AI 智能命题", "描述需求，生成题目，在同一记录中持续完善。")
-    views = ["新建出题", "出题记录", "任务详情"]
+    views = ["新建出题", "出题记录"]
     aliases = {"创建任务": "新建出题", "进度与结果": "任务详情"}
     requested = st.query_params.get("agent_active_view", "新建出题")
     view = aliases.get(requested, requested)
-    if view not in [*views, "模型配置"]:
+    if view not in [*views, "任务详情", "模型配置"]:
         view = "新建出题"
-    nav, settings = st.columns([4, 1], vertical_alignment="center")
+    with st.container(key="oj_agent_navigation"):
+        nav, settings = st.columns([5, 1], vertical_alignment="center")
     st.session_state.agent_nav_selection = view if view in views else None
-    selected = nav.segmented_control(
+    nav.segmented_control(
         "AI 出题功能",
         views,
         key="agent_nav_selection",
@@ -244,8 +252,6 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
     if settings.button("模型配置", key="agent_settings_link"):
         update_route(agent_active_view="模型配置")
         st.rerun()
-    if selected:
-        view = aliases.get(selected, selected)
     with st.container(key="agent_view_content"), st.spinner(VIEW_LOADING_TEXT[view]):
         if view == "模型配置":
             _config(api)

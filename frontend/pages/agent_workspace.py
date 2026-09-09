@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from html import escape
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ STATUS = {
     "pending": "排队中",
     "running": "进行中",
     "success": "已完成",
+    "imported": "已导入",
     "error": "失败",
     "cancelled": "已停止",
     "draft": "待验证",
@@ -49,11 +51,6 @@ STAGES = {
     "cancelled": "已停止",
     "awaiting_validation": "等待验证",
 }
-EXAMPLES = {
-    "算法入门": "出一道适合初学者的二分查找题，背景是寻找宝藏。",
-    "专项练习": "出一道需要前缀和的中等难度题，包含负数和边界测试。",
-    "趣味情境": "以校园食堂排队为背景，出一道考查队列的题目，并提供清晰的样例解释。",
-}
 LABELS = {
     "required_knowledge": "知识点",
     "difficulty": "难度",
@@ -70,21 +67,22 @@ LABELS = {
 }
 
 ERRORS = {
-    'model_timeout': '模型响应超时，可以重试或在模型配置中延长超时。',
-    'model_connection_failed': '暂时无法连接模型服务，请检查连接后重试。',
-    'model_unauthorized': '模型服务拒绝了当前密钥，请更新模型配置后重试。',
-    'model_rate_limited': '模型服务请求过于频繁，请稍后重试。',
-    'model_server_error': '模型服务暂时不可用，请稍后重试。',
-    'model_request_rejected': '模型服务拒绝了请求，请检查模型配置与输入要求。',
-    'invalid_model_response': '模型返回的内容无法解析，请重试生成。',
-    'invalid_structured_output': '模型返回的题目格式不完整，请重试生成。',
-    'validation_failed': '题目未通过验证。可手动修正后验证，或让 AI 继续修改。',
-    'service_restarted': '服务重启中断了本次任务。历史内容已保留，可以重试。',
+    "model_timeout": "模型响应超时，可以精简要求后重试。每次任务总时限为 4 分钟。",
+    "task_timeout": "已达到 4 分钟总时限，任务已停止；已有内容已保留，可调整要求后重试。",
+    "model_connection_failed": "暂时无法连接模型服务，请检查连接后重试。",
+    "model_unauthorized": "模型服务拒绝了当前密钥，请更新模型配置后重试。",
+    "model_rate_limited": "模型服务请求过于频繁，请稍后重试。",
+    "model_server_error": "模型服务暂时不可用，请稍后重试。",
+    "model_request_rejected": "模型服务拒绝了请求，请检查模型配置与输入要求。",
+    "invalid_model_response": "模型返回的内容无法解析，请重试生成。",
+    "invalid_structured_output": "模型返回的题目格式不完整，请重试生成。",
+    "validation_failed": "题目未通过验证。可手动修正后验证，或让 AI 继续修改。",
+    "service_restarted": "服务重启中断了本次任务。历史内容已保留，可以重试。",
 }
 
 
 def task_error(task: dict) -> str:
-    return ERRORS.get(task.get('error_code'), task.get('safe_error_message') or '')
+    return ERRORS.get(task.get("error_code"), task.get("safe_error_message") or "")
 
 
 def task_status(task: dict) -> str:
@@ -92,8 +90,8 @@ def task_status(task: dict) -> str:
 
 
 def open_task(task_id: str, *, edit: bool = False) -> None:
-    if edit:
-        st.session_state['agent_compact_pane'] = '题目'
+    st.session_state["agent_ai_open"] = False
+    st.session_state.pop("agent_import_dialog", None)
     update_route(
         agent_active_view="任务详情",
         agent_task_id=task_id,
@@ -121,6 +119,8 @@ def _post(api: ApiClient, path: str, payload: dict | None = None) -> None:
         if path == "/agent/tasks":
             st.session_state.pop("agent_create_submission", None)
         open_task(result["task_id"])
+        if path.endswith("/refine"):
+            st.session_state["agent_ai_open"] = True
         st.rerun()
 
 
@@ -147,7 +147,7 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
         "描述你想出的题目",
         key=f"{prefix}_prompt",
         height=150,
-        placeholder="例如：出一道适合初学者的二分查找题，背景是寻找宝藏。",
+        placeholder="描述出题需求",
     )
     payload: dict[str, Any] = {"prompt": prompt.strip()} if prompt.strip() else {}
     fields = st.columns([2, 1, 1])
@@ -208,7 +208,7 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
             if value is not None:
                 value = float(value) if name == "time_limit" else int(value)
                 # Older requests allowed one or two testcases; keep them viewable unchanged.
-                if name == 'testcase_count':
+                if name == "testcase_count":
                     minimum = min(minimum, value)
             _seed(f"{prefix}_{name}", value)
             values[name] = col.number_input(
@@ -229,10 +229,10 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
                 problems = []
             titles = {p["id"]: f"{p['id']} · {p['title']}" for p in problems}
             _seed(f"{prefix}_existing_problem_id", data.get("existing_problem_id") or "")
-            previous_id = st.session_state[f'{prefix}_existing_problem_id']
+            previous_id = st.session_state[f"{prefix}_existing_problem_id"]
             if previous_id and previous_id not in titles:
-                titles[previous_id] = f'{previous_id}（原题不可用）'
-                st.warning('原改编题目已不可用，重新生成前请选择另一道题。')
+                titles[previous_id] = f"{previous_id}（原题不可用）"
+                st.warning("原改编题目已不可用，重新生成前请选择另一道题。")
             values["existing_problem_id"] = st.selectbox(
                 "改编题目",
                 ["", *titles],
@@ -275,28 +275,22 @@ def authoring_form(api: ApiClient) -> None:
         + ("已配置，可在模型配置中测试连接" if ready else "请先完成模型配置")
     )
     section_header("从一个想法开始")
-    st.caption("用一段话描述需求，或指定几个条件，让 AI 完成题面、参考解法和测试数据。")
     draft = st.session_state.get("agent_new_draft", {})
     prefix = f"agent_new_{st.session_state.get('agent_composer_id', 'initial')}"
-    with st.container(horizontal=True):
-        for label, example in EXAMPLES.items():
-            st.button(
-                label,
-                key=f"{prefix}_example_{label}",
-                on_click=_set_value,
-                args=(f"{prefix}_prompt", example),
-            )
     with st.container(key="oj_agent_composer"):
         payload = requirement_inputs(api, prefix, draft)
         st.session_state["agent_new_draft"] = payload
-        if st.button("开始出题", type="primary", disabled=not ready, key=f"{prefix}_submit"):
+        footer, submit = st.columns([3, 1], vertical_alignment="center")
+        footer.caption("每次生成一道题，最多等待 4 分钟，可从出题记录查看结果。")
+        if submit.button(
+            "开始出题", type="primary", disabled=not ready, key=f"{prefix}_submit", width="stretch"
+        ):
             if not payload or (
                 payload.get("adapt_existing") and not payload.get("existing_problem_id")
             ):
                 st.error("请描述出题需求或选择至少一个条件；改编时需要选择已有题目。")
                 return
             _post(api, "/agent/tasks", payload)
-    st.caption("每次生成一道题。生成期间可以离开页面，稍后从出题记录继续。")
 
 
 def _reuse(task: dict) -> None:
@@ -318,7 +312,7 @@ def record_list(api: ApiClient) -> None:
         kwargs={"reset_page": "agent_history"},
     )
     status = columns[1].selectbox(
-        "执行状态",
+        "状态",
         ["", *STATUS],
         key="agent_history_status",
         format_func=lambda x: STATUS.get(x, "全部状态"),
@@ -331,7 +325,7 @@ def record_list(api: ApiClient) -> None:
         "page": page,
         "page_size": page_size,
         "search": st.session_state.agent_history_search,
-        "status": status,
+        "display_status": status,
         "difficulty": st.session_state.agent_history_difficulty,
     }
     try:
@@ -354,7 +348,7 @@ def record_list(api: ApiClient) -> None:
     if not data["items"]:
         empty_state("没有符合条件的记录，调整筛选或开始一次新的出题。")
     else:
-        labels, widths = ("题目 / 需求", "状态", "难度", "更新时间", "操作"), (3.5, 1.5, 1, 1.6, 2)
+        labels, widths = ("题目 / 需求", "状态", "难度", "更新时间"), (4.5, 1, 1, 1.6)
         with data_table(labels, widths, key="agent_history"):
             for item in data["items"]:
                 rid = item["record_id"]
@@ -365,57 +359,31 @@ def record_list(api: ApiClient) -> None:
                         on_click=open_task,
                         args=(item["latest_task_id"],),
                     )
-                    row[0].caption(f"{item['version_count']} 次版本 / 执行")
+                    row[0].caption(f"{item['version_count']} 个内容版本")
                     with row[1]:
+                        state = item.get("display_status") or (
+                            "imported"
+                            if item["status"] == "success"
+                            and item.get("imported_task_id") == item["latest_task_id"]
+                            else item["status"]
+                        )
                         badges(
                             [
                                 (
-                                    STATUS[item["status"]],
+                                    STATUS[state],
                                     "red"
-                                    if item["status"] == "error"
+                                    if state == "error"
+                                    else "cyan"
+                                    if state == "imported"
                                     else "green"
-                                    if item["status"] == "success"
+                                    if state == "success"
                                     else "gray",
                                 )
                             ]
                         )
-                        if item["imported_problem_id"]:
-                            st.caption(f"已导入 {item['imported_problem_id']}")
-                        if item["status"] == "error" and item["usable_task_id"]:
-                            st.caption("已有可用版本")
                     with row[2]:
                         cell_text(item["difficulty"] or "AI 决定")
                     row[3].caption(item["updated_at"].replace("T", " ")[:16] + " UTC")
-                    with row[4]:
-                        if item["editable_task_id"]:
-                            st.button(
-                                "修改",
-                                key=f"agent_edit_{rid}",
-                                on_click=open_task,
-                                args=(item["editable_task_id"],),
-                                kwargs={"edit": True},
-                                disabled=bool(item["active_task_id"]),
-                            )
-                        if item["status"] in ("error", "cancelled"):
-                            if st.button(
-                                "重试",
-                                key=f"agent_retry_{rid}",
-                                disabled=bool(item["active_task_id"]),
-                            ):
-                                _post(api, f"/agent/tasks/{item['latest_task_id']}/retry")
-                            st.button(
-                                "修改要求后重试",
-                                key=f"agent_retry_edit_{rid}",
-                                on_click=open_task,
-                                args=(item["latest_task_id"],),
-                            )
-                        elif not item["editable_task_id"]:
-                            st.button(
-                                "查看",
-                                key=f"agent_view_{rid}",
-                                on_click=open_task,
-                                args=(item["latest_task_id"],),
-                            )
     render_pagination("agent_history", total=data["total"])
     st.button("刷新记录", key="agent_refresh_history")
     if any(item["active_task_id"] for item in data["items"]):
@@ -433,7 +401,7 @@ def record_list(api: ApiClient) -> None:
         refresh_active_records()
 
 
-def preview(generated: dict) -> None:
+def preview(generated: dict, report: dict | None = None) -> None:
     problem = generated["problem"]
     badges(
         [
@@ -442,36 +410,50 @@ def preview(generated: dict) -> None:
             *((str(t), "gray") for t in problem.get("tags", [])),
         ]
     )
-    st.subheader(problem["title"])
-    st.markdown(problem["description"])
-    for label, key in [
-        ("输入说明", "input_description"),
-        ("输出说明", "output_description"),
-        ("约束", "constraints"),
-        ("提示", "hint"),
-    ]:
-        if problem.get(key):
-            st.markdown(f"**{label}**")
-            st.markdown(problem[key])
-    for index, sample in enumerate(problem.get("samples", []), 1):
-        st.markdown(f"**样例 {index}**")
-        left, right = st.columns(2)
-        left.code(sample["input"], language=None)
-        right.code(sample["output"], language=None)
-    st.caption(
-        f"时间限制 {problem.get('time_limit', 2)} 秒 · "
-        f"内存限制 {problem.get('memory_limit', 128)} MB"
-    )
-    with st.expander("参考解法与程序"):
+    statement, answer, data, validation = st.tabs(["题面", "参考解法", "测试数据", "验证结果"])
+    with statement:
+        st.markdown(problem["description"])
+        for label, key in [
+            ("输入说明", "input_description"),
+            ("输出说明", "output_description"),
+            ("约束", "constraints"),
+            ("提示", "hint"),
+        ]:
+            if problem.get(key):
+                st.markdown(f"**{label}**")
+                st.markdown(problem[key])
+        for index, sample in enumerate(problem.get("samples", []), 1):
+            st.markdown(f"**样例 {index}**")
+            left, right = st.columns(2)
+            left.code(sample["input"], language=None)
+            right.code(sample["output"], language=None)
+        st.caption(
+            f"时间限制 {problem.get('time_limit', 2)} 秒 · "
+            f"内存限制 {problem.get('memory_limit', 128)} MB"
+        )
+    with answer:
         st.markdown(generated["solution_explanation"])
         st.markdown(generated["complexity_analysis"])
         st.code(generated["reference_solution"], language=generated["reference_solution_language"])
-    with st.expander("测试数据"):
+    with data:
         for index, case in enumerate(problem.get("testcases", []), 1):
             st.caption(f"测试点 {index}")
             left, right = st.columns(2)
             left.code(case["input"], language=None)
             right.code(case["output"], language=None)
+    with validation:
+        if not report:
+            st.caption("此版本尚无验证结果。")
+        else:
+            if report["blocking_errors"]:
+                for error in report["blocking_errors"]:
+                    st.error(error)
+            else:
+                st.success("参考程序与样例、测试点检查通过。")
+            for risk in report.get("unresolved_risks", []):
+                st.warning(risk)
+            with st.expander("验证明细"):
+                st.json(report, expanded=False)
 
 
 def editor(api: ApiClient, task: dict, busy: bool) -> None:
@@ -482,99 +464,110 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
     prefix = f"agent_editor_{task['task_id']}"
     with st.form(prefix):
         problem = candidate["problem"]
-        st.caption("保存会创建新版本；“验证并保存”只检查内容，不会让 AI 重写。")
-        for label, name in [
-            ("题目 ID", "id"),
-            ("标题", "title"),
-            ("来源", "source"),
-            ("作者", "author"),
-        ]:
-            problem[name] = st.text_input(
-                label, value=problem.get(name, ""), key=f"{prefix}_{name}"
+        st.caption("内容变化时保存为待验证的新版本；验证只更新当前版本，不会修改题目内容。")
+        statement, categories, solution = st.tabs(["题面与样例", "分类与限制", "解法与测试"])
+        with statement:
+            for label, name in [
+                ("题面", "description"),
+                ("输入说明", "input_description"),
+                ("输出说明", "output_description"),
+                ("约束", "constraints"),
+                ("提示", "hint"),
+            ]:
+                problem[name] = st.text_area(
+                    label, value=problem.get(name, ""), key=f"{prefix}_{name}", height=130
+                )
+        with categories:
+            for label, name in [
+                ("题目 ID", "id"),
+                ("标题", "title"),
+                ("来源", "source"),
+                ("作者", "author"),
+            ]:
+                problem[name] = st.text_input(
+                    label, value=problem.get(name, ""), key=f"{prefix}_{name}"
+                )
+            columns = st.columns(2)
+            for col, name, options in (
+                (columns[0], "difficulty", DIFFICULTY_LEVELS),
+                (columns[1], "problem_type", PROBLEM_TYPES),
+            ):
+                current = problem.get(name, "")
+                problem[name] = col.selectbox(
+                    LABELS[name],
+                    list(dict.fromkeys([current, *options])),
+                    key=f"{prefix}_{name}",
+                    accept_new_options=True,
+                )
+            tags = st.text_input("标签", "，".join(problem.get("tags", [])), key=f"{prefix}_tags")
+            problem["tags"] = [x.strip() for x in tags.replace("，", ",").split(",") if x.strip()]
+            limits = st.columns(2)
+            problem["time_limit"] = limits[0].number_input(
+                "时间限制（秒）",
+                min_value=0.1,
+                max_value=60.0,
+                value=float(problem.get("time_limit", 2)),
+                key=f"{prefix}_time",
             )
-        for label, name in [
-            ("题面", "description"),
-            ("输入说明", "input_description"),
-            ("输出说明", "output_description"),
-            ("约束", "constraints"),
-            ("提示", "hint"),
-        ]:
-            problem[name] = st.text_area(
-                label, value=problem.get(name, ""), key=f"{prefix}_{name}", height=130
+            problem["memory_limit"] = limits[1].number_input(
+                "内存限制（MB）",
+                min_value=16,
+                max_value=4096,
+                value=int(problem.get("memory_limit", 128)),
+                key=f"{prefix}_memory",
             )
-        columns = st.columns(2)
-        for col, name, options in (
-            (columns[0], "difficulty", DIFFICULTY_LEVELS),
-            (columns[1], "problem_type", PROBLEM_TYPES),
-        ):
-            current = problem.get(name, "")
-            problem[name] = col.selectbox(
-                LABELS[name],
-                list(dict.fromkeys([current, *options])),
-                key=f"{prefix}_{name}",
-                accept_new_options=True,
+        with solution:
+            for label, name in [("样例", "samples"), ("测试点", "testcases")]:
+                st.markdown(f"**{label}**")
+                problem[name] = st.data_editor(
+                    problem.get(name, []),
+                    num_rows="dynamic",
+                    key=f"{prefix}_{name}",
+                    column_config={
+                        "input": st.column_config.TextColumn("输入", required=True),
+                        "output": st.column_config.TextColumn("输出", required=True),
+                    },
+                    hide_index=True,
+                    width="stretch",
+                )
+            for label, name in [
+                ("解法说明", "solution_explanation"),
+                ("复杂度分析", "complexity_analysis"),
+                ("参考程序", "reference_solution"),
+            ]:
+                candidate[name] = st.text_area(
+                    label,
+                    value=candidate[name],
+                    key=f"{prefix}_{name}",
+                    height=180 if name == "reference_solution" else 100,
+                )
+            languages = ["python", "cpp"]
+            candidate["reference_solution_language"] = st.selectbox(
+                "参考程序语言",
+                languages,
+                index=languages.index(candidate["reference_solution_language"]),
+                key=f"{prefix}_language",
             )
-        tags = st.text_input("标签", "，".join(problem.get("tags", [])), key=f"{prefix}_tags")
-        problem["tags"] = [x.strip() for x in tags.replace("，", ",").split(",") if x.strip()]
-        limits = st.columns(2)
-        problem["time_limit"] = limits[0].number_input(
-            "时间限制（秒）",
-            min_value=0.1,
-            max_value=60.0,
-            value=float(problem.get("time_limit", 2)),
-            key=f"{prefix}_time",
-        )
-        problem["memory_limit"] = limits[1].number_input(
-            "内存限制（MB）",
-            min_value=16,
-            max_value=4096,
-            value=int(problem.get("memory_limit", 128)),
-            key=f"{prefix}_memory",
-        )
-        for label, name in [("样例", "samples"), ("测试点", "testcases")]:
-            st.markdown(f"**{label}**")
-            problem[name] = st.data_editor(
-                problem.get(name, []),
+            st.caption("错误解法用于检查测试点能否识别常见错误；可选，最多 5 个。")
+            wrong = st.data_editor(
+                [{"code": c} for c in candidate.get("wrong_solutions", [])] or [{"code": ""}],
                 num_rows="dynamic",
-                key=f"{prefix}_{name}",
-                column_config={
-                    "input": st.column_config.TextColumn("输入", required=True),
-                    "output": st.column_config.TextColumn("输出", required=True),
-                },
+                key=f"{prefix}_wrong",
                 hide_index=True,
+                column_config={"code": "错误解法代码"},
                 width="stretch",
             )
-        for label, name in [
-            ("解法说明", "solution_explanation"),
-            ("复杂度分析", "complexity_analysis"),
-            ("参考程序", "reference_solution"),
-        ]:
-            candidate[name] = st.text_area(
-                label,
-                value=candidate[name],
-                key=f"{prefix}_{name}",
-                height=180 if name == "reference_solution" else 100,
-            )
-        languages = ["python", "cpp"]
-        candidate["reference_solution_language"] = st.selectbox(
-            "参考程序语言",
-            languages,
-            index=languages.index(candidate["reference_solution_language"]),
-            key=f"{prefix}_language",
-        )
-        st.caption("错误解法用于检查测试点能否识别常见错误；可选，最多 5 个。")
-        wrong = st.data_editor(
-            [{"code": c} for c in candidate.get("wrong_solutions", [])] or [{"code": ""}],
-            num_rows="dynamic",
-            key=f"{prefix}_wrong",
-            hide_index=True,
-            column_config={"code": "错误解法代码"},
-            width="stretch",
-        )
-        candidate["wrong_solutions"] = [v["code"] for v in wrong if v.get("code")]
-        left, right = st.columns(2)
+            candidate["wrong_solutions"] = [v["code"] for v in wrong if v.get("code")]
+        cancel, left, right = st.columns([2, 1, 1])
+        cancelled = cancel.form_submit_button("取消编辑")
         saved = left.form_submit_button("保存新版本", disabled=busy)
         validated = right.form_submit_button("验证并保存", type="primary", disabled=busy)
+    if cancelled:
+        for key in list(st.session_state):
+            if key.startswith(prefix):
+                del st.session_state[key]
+        open_task(task["task_id"])
+        st.rerun()
     if saved or validated:
         _post(
             api,
@@ -583,6 +576,11 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
         )
 
 
+def _close_import() -> None:
+    st.session_state.pop("agent_import_dialog", None)
+
+
+@st.dialog("审阅并导入题目", width="small", on_dismiss=_close_import)
 def _import_controls(api: ApiClient, task: dict, record: dict) -> None:
     if task.get("imported_problem_id"):
         st.success(f"此版本已导入为 {task['imported_problem_id']}。继续修改会创建新版本。")
@@ -590,89 +588,120 @@ def _import_controls(api: ApiClient, task: dict, record: dict) -> None:
     if not task.get("final_problem") or task_status(task) != "success":
         return
     tid = task["task_id"]
-    with st.expander("审阅并导入题目", expanded=True):
-        target = record.get("imported_problem_id")
-        choices = ["另存为新题", "更新原题"] if target else ["导入新题"]
-        mode = st.radio("保存方式", choices, key=f"agent_import_mode_{tid}", horizontal=True)
-        updating = mode == "更新原题"
-        if updating:
-            st.info(f"将更新题目 {target}，题目列表会展示更新后的内容。")
-            problem_id = target
+    target = record.get("imported_problem_id")
+    choices = ["另存为新题", "更新原题"] if target else ["导入新题"]
+    mode = (
+        st.radio("保存方式", choices, key=f"agent_import_mode_{tid}", horizontal=True)
+        if target
+        else "导入新题"
+    )
+    updating = mode == "更新原题"
+    if updating:
+        st.info(f"将更新题目 {target}，题目列表会展示更新后的内容。")
+        problem_id = target
+    else:
+        original = task["final_problem"]["problem"]["id"]
+        default_id = f"{original[:50]}_{tid[:8]}" if target else original
+        problem_id = st.text_input("新题目 ID", default_id, key=f"agent_import_id_{tid}")
+    confirmed = st.checkbox("我已审阅题面、参考解法和验证结果", key=f"agent_confirm_{tid}")
+    if st.button(
+        "确认更新原题" if updating else "确认导入",
+        type="primary",
+        disabled=not confirmed or bool(record["active_task_id"]),
+        key=f"agent_import_{tid}",
+    ):
+        try:
+            result = api.post(
+                f"/agent/tasks/{tid}/import",
+                json={
+                    "confirm": True,
+                    "update_existing": updating,
+                    "problem_id": problem_id,
+                },
+            )["data"]
+        except Exception as exc:
+            show_error(exc)
+            if updating:
+                st.caption("如果原题已删除，请切换为“另存为新题”。")
         else:
-            original = task["final_problem"]["problem"]["id"]
-            default_id = f"{original[:50]}_{tid[:8]}" if target else original
-            problem_id = st.text_input("新题目 ID", default_id, key=f"agent_import_id_{tid}")
-        confirmed = st.checkbox("我已审阅题面、参考解法和验证结果", key=f"agent_confirm_{tid}")
-        if st.button(
-            "确认更新原题" if updating else "确认导入",
-            type="primary",
-            disabled=not confirmed or bool(record["active_task_id"]),
-            key=f"agent_import_{tid}",
-        ):
-            try:
-                result = api.post(
-                    f"/agent/tasks/{tid}/import",
-                    json={
-                        "confirm": True,
-                        "update_existing": updating,
-                        "problem_id": problem_id,
-                    },
-                )["data"]
-            except Exception as exc:
-                show_error(exc)
-                if updating:
-                    st.caption("如果原题已删除，请切换为“另存为新题”。")
-            else:
-                invalidate_problem_cache()
-                st.session_state["agent_notice"] = f"已导入题目 {result['problem_id']}。"
-                st.rerun()
+            invalidate_problem_cache()
+            st.session_state["agent_notice"] = f"已导入题目 {result['problem_id']}。"
+            _close_import()
+            st.rerun()
+
+
+def _chat_message(role: str, text: str) -> None:
+    """Keep message identity and readable previews independent of user Markdown."""
+    with st.chat_message(role):
+        if role == "user" and (len(text) > 180 or text.count("\n") > 3):
+            st.html(f'<div class="oj-agent-message-preview">{escape(text[:180])}…</div>')
+            with st.expander("展开完整消息"):
+                st.text(text)
+        else:
+            st.text(text)
 
 
 def _conversation(api: ApiClient, task: dict, record: dict) -> None:
-    with st.container(height=420, key="oj_agent_conversation"):
-        with st.chat_message("user"):
-            st.write(record["prompt"] or "按指定设置出题")
-        for version in record["versions"]:
-            if version["feedback"]:
-                with st.chat_message("user"):
-                    st.write(version["feedback"])
-            with st.chat_message("assistant"):
-                st.write(
-                    f"版本 {version['revision']} · {OPERATIONS[version['operation']]} · "
-                    f"{STATUS[task_status(version)]}"
-                )
-                if task_error(version):
-                    st.caption(task_error(version))
+    generated = task.get("final_problem") or task.get("draft")
+    heading, close = st.columns([3, 1], vertical_alignment="center")
+    heading.markdown("**AI 修改**" if generated else "**调整要求并重试**")
+    with close, st.container(horizontal=True, horizontal_alignment="right"):
+        st.button("收起", key="agent_close_ai", on_click=_set_value, args=("agent_ai_open", False))
+    if generated:
+        st.caption(f"基于版本 {task['revision']} 修改")
+    else:
+        st.caption("尚未生成题目。调整下方要求后重新生成，原执行记录会保留。")
     busy = bool(record["active_task_id"])
     tid = task["task_id"]
-    st.caption(f"接下来的操作将基于版本 {task['revision']}。固定设置仍优先于修改意见。")
-    with st.expander("查看或调整出题要求", expanded=task["status"] in ("error", "cancelled")):
+    failed = task["status"] in ("error", "cancelled")
+    with st.expander(
+        "出题要求",
+        expanded=not generated or bool(st.session_state.get("agent_adjust_requirements")),
+    ):
         request = requirement_inputs(api, f"agent_requirements_{tid}", task["request"])
         st.session_state[f"agent_request_snapshot_{tid}"] = request
-    if task["status"] in ("error", "cancelled"):
-        left, right = st.columns(2)
-        if left.button("重试", disabled=busy, key=f"agent_retry_detail_{tid}"):
-            _post(api, f"/agent/tasks/{tid}/retry")
-        if right.button("修改要求后重试", disabled=busy, key=f"agent_adjust_retry_{tid}"):
+        if failed and st.button(
+            "按修改后的要求重试", type="primary", disabled=busy, key=f"agent_adjust_retry_{tid}"
+        ):
             _post(api, f"/agent/tasks/{tid}/retry", {"request": request})
-        st.caption("重试使用当前模型配置，会新增执行记录并单独计费。")
+    if not generated:
+        return
+    with st.container(height=300, border=False, key="oj_agent_conversation"):
+        _chat_message("user", record["prompt"] or "按指定设置出题")
+        for version in record.get("attempts", record["versions"]):
+            if version["feedback"]:
+                _chat_message("user", version["feedback"])
+            _chat_message(
+                "assistant",
+                f"{('版本 ' + str(version['revision'])) if version['revision'] else '本次执行'}："
+                f"{OPERATIONS[version['operation']]}，"
+                f"{STATUS[task_status(version)]}",
+            )
     feedback = st.text_area(
         "继续修改",
         key=f"agent_feedback_{tid}",
         height=100,
-        placeholder="例如：保留题目背景，增加一个边界样例。",
+        placeholder="输入修改意见",
         disabled=busy,
     )
+    st.caption("已指定的固定条件仍优先于修改意见。")
     if st.button(
         "发送修改要求",
         type="primary",
         key=f"agent_refine_{tid}",
+        width="stretch",
         disabled=busy or not (task.get("draft") or task.get("final_problem")),
     ):
         if not feedback.strip():
             st.error("请填写修改意见。")
         else:
             _post(api, f"/agent/tasks/{tid}/refine", {"feedback": feedback, "request": request})
+
+
+def _show_ai(adjust: bool = False) -> None:
+    st.session_state["agent_ai_open"] = True
+    st.session_state["agent_adjust_requirements"] = adjust
+    update_route(agent_workspace_mode="预览")
 
 
 def _viewport(**kwargs):
@@ -692,6 +721,61 @@ def _viewport(**kwargs):
     return component(**kwargs)
 
 
+def _task_heading(task: dict, record: dict, editing: bool) -> None:
+    generated = task.get("final_problem") or task.get("draft")
+    title = str(generated["problem"]["title"]) if generated else "AI 出题任务"
+    with st.container(key="oj_agent_task_heading"):
+        heading, controls = st.columns([3, 2], gap="small", vertical_alignment="top")
+    with heading:
+        st.html(f'<h3 class="oj-agent-title" title="{escape(title)}">{escape(title)}</h3>')
+        state = (
+            "imported"
+            if task.get("imported_problem_id") and task_status(task) == "success"
+            else task_status(task)
+        )
+        tone = {"imported": "cyan", "success": "green", "error": "red"}.get(state, "gray")
+        badges([(STATUS[state], tone)])
+    versions = {v["task_id"]: v for v in record["versions"]}
+    versions.setdefault(task["task_id"], task)
+    st.session_state.agent_version_selection = task["task_id"]
+    with controls, st.container(key="oj_agent_version_tools"):
+        version_col, more = st.columns([3, 1], gap="small", vertical_alignment="bottom")
+        version_col.selectbox(
+            "查看版本",
+            list(versions),
+            format_func=lambda x: (
+                f"版本 {versions[x]['revision']} · {OPERATIONS[versions[x]['operation']]}"
+                if versions[x]["revision"]
+                else f"本次执行 · {STATUS[task_status(versions[x])]}"
+            ),
+            key="agent_version_selection",
+            on_change=_select_version,
+            disabled=editing,
+            label_visibility="collapsed",
+        )
+        with more.popover("更多", disabled=editing, width="stretch"):
+            st.button("沿用要求出新题", on_click=_reuse, args=(task,))
+
+
+def _requirement_summary(task: dict, record: dict) -> None:
+    request = task["request"]
+    text = record.get("prompt") or request.get("prompt") or ""
+    if not text:
+        text = (
+            "；".join(
+                f"{label}：{'、'.join(map(str, value)) if isinstance(value, list) else value}"
+                for key, label in LABELS.items()
+                if (value := request.get(key)) not in (None, "", [])
+            )
+            or "由 AI 决定出题要求"
+        )
+    with st.container(key="oj_agent_requirement_summary"):
+        st.caption("出题需求")
+        st.html(f'<div class="oj-agent-request-preview">{escape(str(text))}</div>')
+        with st.expander("展开完整需求"):
+            st.text(text)
+
+
 def task_monitor(api: ApiClient) -> None:
     tid = st.query_params.get("agent_task_id") or st.session_state.get("agent_task_id")
     if not tid:
@@ -706,128 +790,182 @@ def task_monitor(api: ApiClient) -> None:
         return
     if notice := st.session_state.pop("agent_notice", None):
         st.success(notice)
-    title, reuse = st.columns([3, 1])
-    title.subheader(record["title"])
-    reuse.button("沿用要求出新题", on_click=_reuse, args=(task,))
-    versions = {v["task_id"]: v for v in record["versions"]}
-    st.session_state.agent_version_selection = tid
-    st.selectbox(
-        "查看版本",
-        list(versions),
-        index=list(versions).index(tid),
-        format_func=lambda x: (
-            f"版本 {versions[x]['revision']} · "
-            f"{OPERATIONS[versions[x]['operation']]} · {STATUS[task_status(versions[x])]}"
-        ),
-        key="agent_version_selection",
-        on_change=_select_version,
+    st.button(
+        "返回出题记录",
+        icon=":material/arrow_back:",
+        key="agent_back_history",
+        on_click=update_route,
+        kwargs={"agent_active_view": "出题记录"},
     )
+    generated = task.get("final_problem") or task.get("draft")
+    mode = restore_widget("agent_workspace_mode", "预览", options=["预览", "编辑"])
+    editing = mode == "编辑"
     active = record["active_task_id"]
-    paused_key = f"agent_poll_paused_{active or tid}"
-    if st.session_state.get(paused_key):
-        st.warning("网络中断，自动刷新已暂停；后台任务仍可继续运行。")
-        if st.button("恢复自动刷新", key="agent_resume_poll"):
-            st.session_state[paused_key] = False
-            st.rerun()
-
-    @st.fragment(run_every=2 if active and not st.session_state.get(paused_key) else None)
-    def progress() -> None:
-        current = next((v for v in record['versions'] if v['task_id'] == active), task)
-        if active and not st.session_state.get(paused_key):
-            try:
-                snapshot = api.get(f"/agent/records/{task['record_id']}")['data']
-                current = next(v for v in snapshot['versions'] if v['task_id'] == active)
-            except Exception:
-                st.session_state[paused_key] = True
+    busy = bool(active)
+    with st.container(key="oj_agent_overview"):
+        _task_heading(task, record, editing)
+        _requirement_summary(task, record)
+        paused_key = f"agent_poll_paused_{active or tid}"
+        if st.session_state.get(paused_key):
+            st.warning("网络中断，自动刷新已暂停；后台任务仍可继续运行。")
+            if st.button("恢复自动刷新", key="agent_resume_poll"):
+                st.session_state[paused_key] = False
                 st.rerun()
-            if current["status"] not in ("pending", "running"):
-                st.rerun()
-        state = task_status(current)
-        st.progress(
-            current["progress"] / 100,
-            text=f"{STAGES.get(current['stage'], current['stage'])} · {STATUS[state]}",
-        )
-        if active and st.button("停止任务", key=f"agent_stop_{active}"):
-            try:
-                api.post(f"/agent/tasks/{active}/cancel")
-            except Exception as exc:
-                show_error(exc)
-            else:
-                st.info("已请求停止。")
 
-    progress()
-    if task_error(task):
-        st.error(task_error(task))
-    if task["status"] in ("error", "cancelled") and record["usable_task_id"]:
-        st.button("打开之前的可用版本", on_click=open_task, args=(record["usable_task_id"],))
-    compact = bool(_viewport(key="agent_viewport", on_compact_change=lambda: None).compact)
-    pane = (
-        st.segmented_control("工作区", ["对话", "题目"], default="对话", key="agent_compact_pane")
-        if compact
-        else None
-    )
-    left, right = (None, None) if compact else st.columns([1, 1.7], gap="large")
-
-    def content() -> None:
-        generated = task.get("final_problem") or task.get("draft")
-        restore_widget("agent_workspace_mode", "预览", options=["预览", "编辑"])
-        mode = (
-            st.segmented_control(
-                "题目工作区",
-                ["预览", "编辑"],
-                key="agent_workspace_mode",
-                on_change=save_widgets,
-                args=("agent_workspace_mode",),
+        @st.fragment(run_every=2 if active and not st.session_state.get(paused_key) else None)
+        def progress() -> None:
+            current = next(
+                (v for v in record.get("attempts", record["versions"]) if v["task_id"] == active),
+                task,
             )
-            or "预览"
-        )
-        if mode == "编辑":
-            editor(api, task, bool(active))
-        elif generated:
-            preview(generated)
-        else:
-            empty_state("题目生成后将显示在这里。你可以先查看左侧的需求和进度。")
-        if task_status(task) == "draft" and st.button("验证此版本", disabled=bool(active)):
-            _post(api, f"/agent/tasks/{tid}/validate")
-        if task.get("validation_report"):
-            with st.expander("验证结果"):
-                report = task["validation_report"]
-                if report["blocking_errors"]:
-                    for error in report["blocking_errors"]:
-                        st.error(error)
+            if active and not st.session_state.get(paused_key):
+                try:
+                    snapshot = api.get(f"/agent/records/{task['record_id']}")["data"]
+                    current = next(
+                        v
+                        for v in snapshot.get("attempts", snapshot["versions"])
+                        if v["task_id"] == active
+                    )
+                except Exception:
+                    st.session_state[paused_key] = True
+                    st.rerun()
+                if current["status"] not in ("pending", "running"):
+                    st.rerun()
+            state = task_status(current)
+            st.progress(
+                current["progress"] / 100,
+                text=f"{STAGES.get(current['stage'], current['stage'])} · {STATUS[state]}",
+            )
+            if active and st.button("停止任务", key=f"agent_stop_{active}"):
+                try:
+                    api.post(f"/agent/tasks/{active}/cancel")
+                except Exception as exc:
+                    show_error(exc)
                 else:
-                    st.success("参考程序与样例、测试点检查通过。")
-                for risk in report.get("unresolved_risks", []):
-                    st.warning(risk)
-                st.json(report, expanded=False)
-        _import_controls(api, task, record)
+                    st.info("已请求停止。")
 
-    if compact:
-        if pane == "题目":
-            content()
-        else:
-            _conversation(api, task, record)
-    else:
-        with left:
-            _conversation(api, task, record)
-        with right:
-            content()
-    with st.expander("实际采用的要求、执行日志与费用"):
-        st.json(task.get("effective_requirements") or task["request"], expanded=False)
-        st.caption(
-            f"本次执行 {task['total_tokens']} Token · {float(task['cost']):.2f} "
-            f"{task['currency']}" + ("（估算）" if task["usage_estimated"] else "")
-        )
-        totals: dict[str, float] = {}
-        for version in record["versions"]:
-            totals[version["currency"]] = totals.get(version["currency"], 0) + float(
-                version["cost"]
+        if active:
+            progress()
+        if task["status"] in ("error", "cancelled"):
+            with st.container(key="oj_agent_failure"):
+                message = task_error(task) or "本次任务已停止，已有内容已保留。"
+                st.html(f'<p class="oj-agent-status-message">{escape(message)}</p>')
+                with st.container(horizontal=True):
+                    if st.button("重试", disabled=busy, key=f"agent_retry_detail_{tid}"):
+                        _post(api, f"/agent/tasks/{tid}/retry")
+                    st.button("修改要求后重试", disabled=busy, on_click=_show_ai, args=(True,))
+                    if record["usable_task_id"]:
+                        st.button(
+                            "打开之前的可用版本",
+                            on_click=open_task,
+                            args=(record["usable_task_id"],),
+                        )
+                st.caption("重试使用当前模型配置，会新增执行记录并单独计费。")
+    compact = bool(_viewport(key="agent_viewport", on_compact_change=lambda: None).compact)
+    ai_open = bool(st.session_state.get("agent_ai_open")) and not editing
+    with st.container(key="oj_agent_workspace"):
+        if generated and not editing:
+            with st.container(key="oj_agent_toolbar"):
+                actions, primary = st.columns([3, 2], vertical_alignment="center")
+                with actions, st.container(horizontal=True, vertical_alignment="center"):
+                    st.markdown("**题目**")
+                    st.button("AI 修改", on_click=_show_ai, disabled=busy or ai_open)
+                    st.button(
+                        "手动编辑",
+                        on_click=open_task,
+                        args=(tid,),
+                        kwargs={"edit": True},
+                        disabled=busy or not generated,
+                    )
+                with primary, st.container(horizontal=True, horizontal_alignment="right"):
+                    if task_status(task) == "draft":
+                        if st.button("验证题目", type="primary", disabled=busy):
+                            _post(api, f"/agent/tasks/{tid}/validate")
+                    elif task.get("imported_problem_id"):
+                        from urllib.parse import urlencode
+
+                        st.link_button(
+                            "查看已导入题目",
+                            "/problems?" + urlencode({"problem": task["imported_problem_id"]}),
+                        )
+                    elif (
+                        task.get("final_problem")
+                        and task_status(task) == "success"
+                        and st.button("导入题目", type="primary", disabled=busy)
+                    ):
+                        st.session_state["agent_import_dialog"] = tid
+
+        elif editing:
+            st.markdown("**编辑题目**")
+        elif not ai_open:
+            st.markdown("**题目**")
+
+        if st.session_state.get("agent_import_dialog") == tid:
+            _import_controls(api, task, record)
+
+        def content() -> None:
+            with st.container(key="oj_agent_document"):
+                if editing:
+                    editor(api, task, busy)
+                elif generated:
+                    preview(generated, task.get("validation_report"))
+                else:
+                    message = (
+                        "正在生成题目，完成后将在这里显示。"
+                        if active
+                        else "本次任务尚未生成题目，可在上方重试或调整要求。"
+                        if task["status"] in ("error", "cancelled")
+                        else "题目生成后将显示在这里。"
+                    )
+                    st.html(f'<p class="oj-agent-empty">{escape(message)}</p>')
+
+        if ai_open and not generated:
+            with st.container(key="oj_agent_retry_panel"):
+                _conversation(api, task, record)
+        elif ai_open and compact:
+            st.button(
+                "返回题目",
+                icon=":material/arrow_back:",
+                on_click=_set_value,
+                args=("agent_ai_open", False),
             )
-        st.caption("此记录累计费用：" + " / ".join(f"{v:.2f} {k}" for k, v in totals.items()))
-        if st.checkbox("加载执行日志", key=f"agent_show_events_{tid}"):
-            try:
-                events = api.get(f"/agent/tasks/{tid}/events", params={"after_id": 0})["data"]
-                for event in events:
-                    st.caption(f"{event['timestamp'][:19]} · {event['message']}")
-            except Exception as exc:
-                show_error(exc)
+            with st.container(key="oj_agent_ai_panel"):
+                _conversation(api, task, record)
+        elif ai_open:
+            document, conversation = st.columns([2, 1], gap="large")
+            with document:
+                content()
+            with conversation, st.container(key="oj_agent_ai_panel"):
+                _conversation(api, task, record)
+        else:
+            content()
+        with st.container(key="oj_agent_task_information"), st.expander("任务信息"):
+            st.markdown("**执行历史**")
+            for version in record.get("attempts", record["versions"]):
+                label = f"版本 {version['revision']}" if version["revision"] else "未生成版本"
+                st.caption(
+                    f"{label} · {OPERATIONS[version['operation']]} · {STATUS[task_status(version)]}"
+                )
+            if record.get("imported_problem_id"):
+                st.caption(f"历史导入目标：{record['imported_problem_id']}")
+            st.markdown("**实际采用的要求**")
+            st.json(task.get("effective_requirements") or task["request"], expanded=False)
+            st.caption(
+                f"本次执行 {task['total_tokens']} Token · {float(task['cost']):.2f} "
+                f"{task['currency']}" + ("（估算）" if task["usage_estimated"] else "")
+            )
+            totals: dict[str, float] = {}
+            for version in record.get("attempts", record["versions"]):
+                totals[version["currency"]] = totals.get(version["currency"], 0) + float(
+                    version["cost"]
+                )
+            st.caption("此记录累计费用：" + " / ".join(f"{v:.2f} {k}" for k, v in totals.items()))
+            if task.get("error_code") == "task_timeout":
+                st.caption("中断请求可能有未返回的用量；此处仅保留已知费用，最终以服务商账单为准。")
+            if st.checkbox("加载执行日志", key=f"agent_show_events_{tid}"):
+                try:
+                    events = api.get(f"/agent/tasks/{tid}/events", params={"after_id": 0})["data"]
+                    for event in events:
+                        st.caption(f"{event['timestamp'][:19]} · {event['message']}")
+                except Exception as exc:
+                    show_error(exc)

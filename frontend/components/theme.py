@@ -60,9 +60,133 @@ GLOBAL_CSS = r"""
   background: transparent; padding: .65rem .5rem;
 }
 [class*="_conditions"] button { border-radius: 18px; }
-.st-key-agent_nav_selection { margin-bottom: 1rem; }
+.st-key-agent_nav_selection { margin-bottom: .35rem; }
+.st-key-oj_agent_navigation .st-key-agent_nav_selection button {
+  border: 0 !important; border-bottom: 2px solid transparent !important;
+  border-radius: 0 !important; background: transparent !important;
+  color: var(--oj-muted) !important; padding: .45rem .8rem; min-height: 40px;
+}
+.st-key-oj_agent_navigation .st-key-agent_nav_selection
+  button:is([aria-pressed="true"], [aria-checked="true"]) {
+  color: var(--oj-primary) !important; background: transparent !important;
+  border-bottom-color: var(--oj-primary) !important;
+}
+.st-key-agent_nav_selection button p { font-size: 15px; }
+.st-key-oj_agent_toolbar {
+  padding: 0 0 1rem; margin-bottom: .5rem;
+  border-bottom: 1px solid var(--oj-line);
+}
+.st-key-agent_viewport { display: none; }
+.st-key-agent_view_content .st-key-agent_back_history button {
+  border: 0; background: transparent; padding-left: 0;
+}
+.st-key-oj_agent_overview, .st-key-oj_agent_workspace {
+  background: var(--oj-surface); border: 1px solid var(--oj-line);
+  border-radius: 12px; padding: 24px; margin-bottom: 4px;
+  gap: 20px;
+}
+.st-key-oj_agent_overview .oj-agent-title {
+  font-family: var(--oj-font); color: var(--oj-ink); font-size: 24px;
+  font-weight: 650; line-height: 1.4; padding: 0; margin: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.st-key-oj_agent_version_tools [data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important; align-items: flex-end; gap: 12px;
+}
+.st-key-oj_agent_version_tools [data-testid="stColumn"] {
+  min-width: 0 !important; width: auto !important; flex: 1 1 auto !important;
+}
+.st-key-oj_agent_version_tools [data-testid="stColumn"]:last-child {
+  flex: 0 0 88px !important;
+}
+.st-key-oj_agent_version_tools [data-baseweb="select"] > div,
+.st-key-oj_agent_version_tools .react-aria-ComboBox > [role="group"],
+.st-key-oj_agent_version_tools [data-testid="stPopover"] button {
+  min-height: 44px; height: 44px; box-sizing: border-box;
+}
+.st-key-oj_agent_version_tools .react-aria-ComboBox :is(input, button) { height: 42px; }
+.st-key-oj_agent_requirement_summary { gap: 8px; }
+.st-key-oj_agent_overview .oj-agent-request-preview {
+  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; font-size: 16px; color: var(--oj-ink);
+}
+.st-key-oj_agent_requirement_summary [data-testid="stText"] {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--oj-font);
+}
+.st-key-oj_agent_failure {
+  background: #fbf8eb; padding: 16px; border-radius: 8px; gap: 12px;
+}
+.st-key-oj_agent_failure .oj-agent-status-message {
+  color: var(--oj-warning); margin: 0; line-height: 1.6;
+}
+.st-key-oj_agent_document { padding: 0; min-width: 0; }
+.st-key-oj_agent_document .oj-agent-empty {
+  color: var(--oj-muted); padding: 12px 0; margin: 0; line-height: 1.75;
+}
+.st-key-oj_agent_task_information {
+  border-top: 1px solid var(--oj-line); padding-top: 16px;
+}
+.st-key-oj_agent_document [data-testid="stMarkdownContainer"] {
+  max-width: 80ch;
+}
+.st-key-oj_agent_workspace .st-key-oj_agent_ai_panel {
+  border-left: 1px solid var(--oj-line); padding-left: 24px; min-width: 0;
+}
+.st-key-oj_agent_ai_panel .st-key-oj_agent_conversation { border: 0; }
+.st-key-oj_agent_ai_panel [data-testid="stChatMessageAvatarAssistant"] {
+  background: var(--oj-tint); color: var(--oj-primary);
+}
+.st-key-oj_agent_conversation [data-testid="stChatMessage"] {
+  align-items: flex-start; gap: 10px; padding: 8px 0;
+}
+.st-key-oj_agent_conversation
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+  flex-direction: row-reverse;
+}
+.st-key-oj_agent_conversation [data-testid="stChatMessageAvatarUser"] {
+  background: #e8eefb; color: #365c9c;
+}
+.st-key-oj_agent_conversation [data-testid="stChatMessageContent"] {
+  flex: 0 1 auto; min-width: 0; max-width: calc(100% - 42px);
+  padding: 10px 12px; border-radius: 10px; background: var(--oj-tint);
+}
+.st-key-oj_agent_conversation
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
+[data-testid="stChatMessageContent"] {
+  background: #f0f4fc;
+}
+.st-key-oj_agent_conversation .oj-agent-message-preview {
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.7;
+}
+.st-key-oj_agent_conversation [data-testid="stExpander"] details {
+  background: transparent; border: 0;
+}
+.st-key-oj_agent_retry_panel { min-width: 0; }
 @media (max-width: 700px) {
   .st-key-oj_agent_composer { padding: 1rem; }
+  .st-key-oj_agent_overview, .st-key-oj_agent_workspace { padding: 16px; }
+  .st-key-oj_agent_overview .oj-agent-title { font-size: 22px; }
+  .st-key-oj_agent_document [role="tablist"] { gap: .65rem; }
+  .st-key-oj_agent_document [role="tab"] { padding-inline: .1rem; }
+  .st-key-oj_agent_navigation [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; gap: .5rem; }
+  .st-key-oj_agent_navigation [data-testid="stColumn"] {
+    min-width: 0 !important; width: auto !important; flex: 1 1 auto !important;
+  }
+  .st-key-oj_agent_navigation [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; }
+  .st-key-agent_nav_selection button { padding-inline: .45rem; }
+  .st-key-agent_settings_link button { padding-inline: .5rem; }
+}
+@media (max-width: 1000px) {
+  .st-key-oj_agent_workspace .st-key-oj_agent_ai_panel { border-left: 0; padding-left: 0; }
+  .st-key-oj_agent_task_heading > [data-testid="stHorizontalBlock"] {
+    flex-direction: column; gap: 16px;
+  }
+  .st-key-oj_agent_task_heading > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    width: 100% !important; flex: 1 1 auto !important; min-width: 0 !important;
+  }
 }
 
 /* Existing native navigation remains the only navigation control. */
@@ -354,9 +478,10 @@ button:focus-visible, a:focus-visible, [role="radio"]:focus-visible,
 [data-testid="stSegmentedControl"] button p, [data-testid="stButtonGroup"] button p {
   color: inherit; font-size: 16px; white-space: normal; line-height: 1.5;
 }
-[class*="problem_authoring_mode"] [role="radiogroup"] { margin: .5rem 0 1rem; }
+[class*="problem_authoring_mode"] [role="radiogroup"] { margin: .25rem 0 .5rem; }
+[class*="problem_authoring_mode"] button { min-height: 40px; padding: .4rem .9rem; }
 [class*="problem_authoring_mode"] [role="radiogroup"] button p {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
 
 }
@@ -584,7 +709,7 @@ button:focus-visible, a:focus-visible, [role="radio"]:focus-visible,
     [data-testid="stColumn"]:not(:first-child) {
     flex: 1 1 40% !important; width: 40% !important; min-width: 0 !important;
   }
-  [class*="problem_authoring_mode"] [role="radiogroup"] button p { font-size: 18px; }
+  [class*="problem_authoring_mode"] [role="radiogroup"] button p { font-size: 15px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

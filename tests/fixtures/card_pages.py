@@ -40,6 +40,8 @@ pages = [
     "AI 结果",
     "AI 异常",
     "AI 进度",
+    "AI 已停止",
+    "AI 长标题",
     "语言注册",
     "代码提交",
     "题目内提交",
@@ -75,16 +77,21 @@ elif page in {"普通命题", "编辑题目"}:
 elif page == "模型配置":
     agent._config(api)
 elif page == "AI 命题":
-    from frontend.pages.agent_workspace import authoring_form
-    authoring_form(AgentPreviewApi())
+    st.query_params.setdefault("problem_authoring_mode", "AI 智能命题")
+    problems.render_problem_management(AgentPreviewApi())
 elif page == "AI 记录":
-    from frontend.pages.agent_workspace import record_list
-    record_list(AgentPreviewApi())
-elif page in {"AI 结果", "AI 异常", "AI 进度"}:
-    scenario = {"AI 结果": "success", "AI 异常": "error", "AI 进度": "running"}[page]
-    from frontend.pages.agent_workspace import task_monitor
-    st.session_state.setdefault("agent_task_id", "fixture-2")
-    task_monitor(AgentPreviewApi(scenario))
+    st.query_params.setdefault("problem_authoring_mode", "AI 智能命题")
+    st.query_params.setdefault("agent_active_view", "出题记录")
+    problems.render_problem_management(AgentPreviewApi())
+elif page in {"AI 结果", "AI 异常", "AI 进度", "AI 已停止", "AI 长标题"}:
+    scenario = {
+        "AI 结果": "success", "AI 异常": "error", "AI 进度": "running",
+        "AI 已停止": "cancelled", "AI 长标题": "long_title",
+    }[page]
+    st.query_params.setdefault("problem_authoring_mode", "AI 智能命题")
+    st.query_params.setdefault("agent_active_view", "任务详情")
+    st.query_params.setdefault("agent_task_id", "fixture-2")
+    problems.render_problem_management(AgentPreviewApi(scenario))
 elif page == "语言注册":
     languages.render_language_registration(api)
 elif page == "代码提交":

@@ -187,6 +187,9 @@ async def list_records(
         str, Query(pattern=r"^(pending|running|success|error|cancelled|draft)?$")
     ] = "",
     difficulty: Annotated[str, Query(max_length=50)] = "",
+    display_status: Annotated[
+        str, Query(pattern=r"^(pending|running|success|imported|error|cancelled|draft)?$")
+    ] = "",
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> ApiResponse:
@@ -195,6 +198,7 @@ async def list_records(
             current_user.id,
             search=search,
             status=status,
+            display_status=display_status,
             difficulty=difficulty,
             page=page,
             page_size=page_size,
@@ -211,7 +215,20 @@ async def get_record(
     versions = await repository.record_versions(current_user.id, record_id)
     if not versions:
         raise HTTPException(status_code=404, detail="agent record not found")
-    return ApiResponse(data={**repository.summarize_record(versions), "versions": versions})
+    grouped = {}
+    for version in versions:
+        if version["has_content"]:
+            key = version["content_version_id"] or version["task_id"]
+            if key not in grouped or version["usable"] >= grouped[key]["usable"]:
+                grouped[key] = version
+    content_versions = sorted(grouped.values(), key=lambda v: v["revision"])
+    return ApiResponse(
+        data={
+            **repository.summarize_record(versions),
+            "versions": content_versions,
+            "attempts": versions,
+        }
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=ApiResponse)
@@ -330,10 +347,12 @@ async def save_version(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    saved = await manager.repository.get_task(new_id)
+    assert saved is not None
     return ApiResponse(
         data={
             "task_id": new_id,
-            "status": "pending" if payload.validate_now else "draft",
+            "status": "draft" if saved.stage == "awaiting_validation" else saved.status.value,
         }
     )
 
@@ -345,14 +364,16 @@ async def validate_version(
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
-        new_id = await manager.save_version(current_user.id, task_id, validate=True)
+        new_id = await manager.validate_version(current_user.id, task_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="agent task not found") from exc
     except RecordBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ApiResponse(data={"task_id": new_id, "status": "pending"})
+    saved = await manager.repository.get_task(new_id)
+    assert saved is not None
+    return ApiResponse(data={"task_id": new_id, "status": saved.status.value})
 
 
 @router.post("/tasks/{task_id}/import", response_model=ApiResponse)

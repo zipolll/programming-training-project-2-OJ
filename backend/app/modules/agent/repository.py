@@ -121,6 +121,18 @@ class AgentRepository:
                 if current[1]:
                     raise RecordBusyError("此记录已有正在运行的任务，请等待完成或停止任务。")
                 revision = current[0] + 1
+                if generated:
+                    cursor = await connection.execute(
+                        "SELECT * FROM agent_tasks WHERE record_id=? AND user_id=? "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (record_id, user_id),
+                    )
+                    latest = await cursor.fetchone()
+                    content = latest["final_problem_json"] or latest["draft_json"]
+                    if content and GeneratedProblem.model_validate_json(content) == generated:
+                        return self._task(dict(latest))
+            if generated is None:
+                revision = 0  # An execution becomes a version only after content exists.
             await connection.execute(
                 """
                 INSERT INTO agent_tasks
@@ -148,6 +160,11 @@ class AgentRepository:
                     _json(generated) if generated else None,
                 ),
             )
+            if generated is not None:
+                await connection.execute(
+                    "UPDATE agent_tasks SET content_version_id=task_id WHERE task_id=?",
+                    (task_id,),
+                )
             await connection.commit()
         task = await self.get_task(task_id)
         assert task is not None
@@ -160,6 +177,96 @@ class AgentRepository:
             )
             row = await cursor.fetchone()
         return self._task(dict(row)) if row else None
+
+    async def prepare_validation(self, task_id: str, user_id: int) -> bool:
+        """Claim the existing content version atomically; duplicate validation is a no-op."""
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                "SELECT * FROM agent_tasks WHERE task_id=? AND user_id=?",
+                (task_id, user_id),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise LookupError("agent task not found")
+            if not (row["draft_json"] or row["final_problem_json"]):
+                raise ValueError("尚无可验证的题目。")
+            if row["status"] in ("pending", "running"):
+                if row["validation_only"]:
+                    return False
+                raise RecordBusyError("此版本正在生成，请等待完成。")
+            if row["status"] == "success" and row["final_problem_json"]:
+                return False
+            cursor = await connection.execute(
+                "SELECT 1 FROM agent_tasks WHERE record_id=? AND status IN ('pending','running')",
+                (row["record_id"],),
+            )
+            if await cursor.fetchone():
+                raise RecordBusyError("此记录已有正在运行的任务，请等待完成或停止任务。")
+            now = utc_now().isoformat()
+            await connection.execute(
+                "INSERT INTO agent_events(task_id,stage,event_type,message,progress,timestamp) "
+                "VALUES (?, 'queued', 'validation', ?, 0, ?)",
+                (
+                    task_id,
+                    _json(
+                        {
+                            "action": "验证当前版本",
+                            "previous_status": row["status"],
+                            "previous_report": json.loads(row["validation_report_json"] or "null"),
+                            "previous_error": row["safe_error_message"],
+                        }
+                    ),
+                    now,
+                ),
+            )
+            await connection.execute(
+                "UPDATE agent_tasks SET status='pending', stage='queued', progress=0, "
+                "validation_only=1, execution_queued_at=?, updated_at=?, started_at=NULL, "
+                "finished_at=NULL, cancellation_requested=0, error_code=NULL, "
+                "safe_error_message=NULL, validation_report_json=NULL WHERE task_id=?",
+                (now, now, task_id),
+            )
+            await connection.commit()
+            return True
+
+    async def store_draft(self, task_id: str, generated: GeneratedProblem) -> None:
+        """Keep execution history but allocate a content version only for changed content."""
+        encoded = _json(generated)
+        async with self.database.connect() as connection:
+            await connection.execute("BEGIN IMMEDIATE")
+            cursor = await connection.execute(
+                "SELECT * FROM agent_tasks WHERE task_id=? AND status IN ('pending','running')",
+                (task_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return
+            cursor = await connection.execute(
+                "SELECT task_id, content_version_id, revision FROM agent_tasks "
+                "WHERE record_id=? AND task_id<>? "
+                "AND (? IS NULL OR task_id=?) "
+                "AND COALESCE(final_problem_json,draft_json)=? ORDER BY created_at LIMIT 1",
+                (row["record_id"], task_id, row["base_task_id"], row["base_task_id"], encoded),
+            )
+            same = await cursor.fetchone()
+            if same:
+                revision = same["revision"]
+                version_id = same["content_version_id"] or same["task_id"]
+            else:
+                cursor = await connection.execute(
+                    "SELECT COALESCE(MAX(revision),0)+1 FROM agent_tasks "
+                    "WHERE record_id=? AND task_id<>?",
+                    (row["record_id"], task_id),
+                )
+                revision = (await cursor.fetchone())[0]
+                version_id = task_id
+            await connection.execute(
+                "UPDATE agent_tasks SET draft_json=?, revision=?, content_version_id=?, "
+                "updated_at=? WHERE task_id=? AND status IN ('pending','running')",
+                (encoded, revision, version_id, utc_now().isoformat(), task_id),
+            )
+            await connection.commit()
 
     async def list_tasks(self, user_id: int) -> list[AgentTask]:
         async with self.database.connect() as connection:
@@ -183,9 +290,10 @@ class AgentRepository:
             cursor = await connection.execute(
                 """
                 SELECT t.task_id,t.record_id,t.parent_task_id,t.base_task_id,t.operation,
-                    t.revision,t.feedback,t.status,t.stage,t.progress,t.created_at,t.updated_at,
+                    t.revision,t.content_version_id,t.validation_only,t.feedback,
+                    t.status,t.stage,t.progress,t.created_at,t.updated_at,
                     t.safe_error_message,t.error_code,t.cost,t.currency,t.total_tokens,
-                    i.problem_id AS imported_problem_id,
+                    COALESCE(i.problem_id,vi.problem_id) AS imported_problem_id,
                     COALESCE(json_extract(t.final_problem_json,'$.problem.title'),
                         json_extract(t.draft_json,'$.problem.title'),'') AS title,
                     COALESCE(json_extract(t.final_problem_json,'$.problem.difficulty'),
@@ -197,6 +305,7 @@ class AgentRepository:
                     (t.final_problem_json IS NOT NULL AND t.status='success') AS usable,
                     (t.draft_json IS NOT NULL OR t.final_problem_json IS NOT NULL) AS has_content
                 FROM agent_tasks t LEFT JOIN agent_imports i ON i.task_id=t.task_id
+                LEFT JOIN agent_imports vi ON vi.task_id=t.content_version_id
                 WHERE t.user_id=? AND (? IS NULL OR t.record_id=?)
                 ORDER BY t.created_at, t.revision, t.task_id
                 """,
@@ -207,14 +316,14 @@ class AgentRepository:
 
     @staticmethod
     def summarize_record(versions: list[dict[str, Any]]) -> dict[str, Any]:
-        latest = versions[-1]
+        latest = max(versions, key=lambda version: version["updated_at"])
         content = next((v for v in reversed(versions) if v["has_content"]), latest)
         usable = next((v for v in reversed(versions) if v["usable"]), None)
         imported = next((v for v in reversed(versions) if v["imported_problem_id"]), None)
         active = next(
             (v for v in reversed(versions) if v["status"] in ("pending", "running")), None
         )
-        root = versions[0]
+        root = next((v for v in versions if v["task_id"] == v["record_id"]), versions[0])
         return {
             "record_id": root["record_id"],
             "latest_task_id": latest["task_id"],
@@ -226,9 +335,18 @@ class AgentRepository:
             "prompt": root["prompt"],
             "difficulty": content["difficulty"],
             "status": "draft" if latest["stage"] == "awaiting_validation" else latest["status"],
+            "display_status": "draft"
+            if latest["stage"] == "awaiting_validation"
+            else (
+                "imported"
+                if latest["status"] == "success" and latest["imported_problem_id"]
+                else latest["status"]
+            ),
             "stage": latest["stage"],
             "progress": latest["progress"],
-            "version_count": len(versions),
+            "version_count": len(
+                {v["content_version_id"] or v["task_id"] for v in versions if v["has_content"]}
+            ),
             "updated_at": max(v["updated_at"] for v in versions),
             "usable_task_id": usable["task_id"] if usable else None,
             "editable_task_id": content["task_id"] if content["has_content"] else None,
@@ -243,6 +361,7 @@ class AgentRepository:
         *,
         search: str = "",
         status: str = "",
+        display_status: str = "",
         difficulty: str = "",
         page: int = 1,
         page_size: int = 20,
@@ -259,6 +378,7 @@ class AgentRepository:
             if (
                 (not query or query in (r["title"] + " " + r["prompt"]).casefold())
                 and (not status or r["status"] == status)
+                and (not display_status or r["display_status"] == display_status)
                 and (not difficulty or r["difficulty"] == difficulty)
             )
         ]
@@ -291,7 +411,8 @@ class AgentRepository:
             )
             await connection.commit()
 
-    async def update_task(self, task_id: str, **values: Any) -> None:
+    async def update_task(self, task_id: str, **values: Any) -> bool:
+        """Freeze terminal executions so late work cannot overwrite timeout/cancellation."""
         allowed = {
             "effective_requirements_json",
             "status",
@@ -326,11 +447,13 @@ class AgentRepository:
         converted["updated_at"] = utc_now().isoformat()
         assignments = ", ".join(f"{key} = ?" for key in converted)
         async with self.database.connect() as connection:
-            await connection.execute(
-                f"UPDATE agent_tasks SET {assignments} WHERE task_id = ?",  # noqa: S608
+            cursor = await connection.execute(
+                f"UPDATE agent_tasks SET {assignments} WHERE task_id = ? "  # noqa: S608
+                "AND status IN ('pending', 'running')",
                 (*converted.values(), task_id),
             )
             await connection.commit()
+            return cursor.rowcount > 0
 
     async def add_event(
         self, task_id: str, stage: str, event_type: str, message: str, progress: int
@@ -436,16 +559,20 @@ class AgentRepository:
     async def get_import(self, task_id: str) -> str | None:
         async with self.database.connect() as connection:
             cursor = await connection.execute(
-                "SELECT problem_id FROM agent_imports WHERE task_id=?", (task_id,)
+                "SELECT COALESCE(i.problem_id,vi.problem_id) FROM agent_tasks t "
+                "LEFT JOIN agent_imports i ON i.task_id=t.task_id "
+                "LEFT JOIN agent_imports vi ON vi.task_id=t.content_version_id WHERE t.task_id=?",
+                (task_id,),
             )
             row = await cursor.fetchone()
-        return str(row[0]) if row else None
+        return str(row[0]) if row and row[0] is not None else None
 
     async def record_import(self, task_id: str, problem_id: str) -> None:
         async with self.database.connect() as connection:
             await connection.execute(
-                "INSERT OR IGNORE INTO agent_imports VALUES (?, ?, ?)",
-                (task_id, problem_id, utc_now().isoformat()),
+                "INSERT OR IGNORE INTO agent_imports(task_id,problem_id,imported_at) "
+                "SELECT COALESCE(content_version_id,task_id),?,? FROM agent_tasks WHERE task_id=?",
+                (problem_id, utc_now().isoformat(), task_id),
             )
             await connection.commit()
 
@@ -461,6 +588,11 @@ class AgentRepository:
             feedback=row.get("feedback", ""),
             effective_requirements=json.loads(row.get("effective_requirements_json") or "{}"),
             revision=row["revision"],
+            content_version_id=row.get("content_version_id"),
+            validation_only=bool(row.get("validation_only")),
+            execution_queued_at=datetime.fromisoformat(row["execution_queued_at"])
+            if row.get("execution_queued_at")
+            else None,
             status=AgentStatus(row["status"]),
             stage=row["stage"],
             progress=row["progress"],

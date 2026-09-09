@@ -89,16 +89,21 @@ class OpenAICompatibleClient:
         url = config.provider_url
         if not url.endswith("/chat/completions"):
             url = f"{url}/chat/completions"
-        payload = {
+        payload: dict[str, Any] = {
             "model": config.model_name,
             "messages": messages,
             "response_format": {"type": "json_object"},
-            "max_tokens": config.max_output_tokens,
+            "max_tokens": min(config.max_output_tokens, 16000),
             "temperature": 0.2,
         }
+        # GLM-5.3 requires thinking enabled; low is its fastest supported effort.
+        # Do not send vendor-specific parameters to unrelated compatible models.
+        model = config.model_name.lower().rsplit("/", 1)[-1]
+        if model in {"glm-5.3", "glm-5.3-flash"}:
+            payload.update(thinking={"type": "enabled"}, reasoning_effort="low")
         try:
             async with httpx.AsyncClient(
-                timeout=config.request_timeout,
+                timeout=min(config.request_timeout, 240.0),
                 transport=self.transport,
                 follow_redirects=False,
             ) as client:
@@ -149,7 +154,7 @@ class OpenAICompatibleClient:
             [
                 {"role": "system", "content": "Return JSON only."},
                 {"role": "user", "content": 'Return exactly {"ok":true}.'},
-            ]
+            ],
         )
 
 

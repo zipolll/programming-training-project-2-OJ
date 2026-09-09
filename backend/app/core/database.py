@@ -238,6 +238,9 @@ class Database:
                 ("operation", "TEXT NOT NULL DEFAULT 'generate'"),
                 ("feedback", "TEXT NOT NULL DEFAULT ''"),
                 ("effective_requirements_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("validation_only", "INTEGER NOT NULL DEFAULT 0"),
+                ("execution_queued_at", "TEXT"),
+                ("content_version_id", "TEXT"),
             ):
                 if name not in task_columns:
                     await connection.execute(
@@ -261,6 +264,14 @@ class Database:
             await connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_record ON agent_tasks"
                 "(user_id, record_id, created_at DESC)"
+            )
+            await connection.execute(
+                "UPDATE agent_tasks SET content_version_id=task_id "
+                "WHERE content_version_id IS NULL "
+                "AND (draft_json IS NOT NULL OR final_problem_json IS NOT NULL)"
+            )
+            await connection.execute(
+                "UPDATE agent_tasks SET validation_only=1 WHERE operation='validate'"
             )
             await connection.commit()
 
