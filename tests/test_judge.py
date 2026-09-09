@@ -243,7 +243,8 @@ def test_invalid_and_unbounded_output_is_safe(
         client,
         f"output_{expected.value.lower()}",
         [{"input": "", "output": "x"}],
-        time_limit=0.2,
+        # Encoding/output-limit tests need time for interpreter startup on Windows.
+        time_limit=0.2 if expected is Status.TLE else 2.0,
     )
 
     result = judge(
