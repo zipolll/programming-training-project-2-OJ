@@ -1,5 +1,6 @@
 """Offline production-renderer checks for the unified editor and conversation."""
 
+import os
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -7,13 +8,22 @@ from playwright.sync_api import expect, sync_playwright
 
 OUTPUT = Path(".pytest_cache/agent-editor-screenshots")
 OUTPUT.mkdir(parents=True, exist_ok=True)
+BASE_URL = os.getenv("OJ_FIXTURE_BASE_URL", "http://127.0.0.1:8529/")
 
 with sync_playwright() as p:
     browser = p.chromium.launch(channel="msedge")
     page = browser.new_page(viewport={"width": 1440, "height": 1100})
+    frontend_errors = []
+    page.on(
+        "console",
+        lambda message: (
+            frontend_errors.append(message.text) if message.type in ("error", "warning") else None
+        ),
+    )
+    page.on("pageerror", lambda error: frontend_errors.append(str(error)))
 
     def visit(scenario):
-        page.goto("http://127.0.0.1:8529/?" + urlencode({"fixture_page": scenario}))
+        page.goto(BASE_URL + "?" + urlencode({"fixture_page": scenario}))
         expect(page.locator(".st-key-oj_agent_workspace")).to_be_visible(timeout=30000)
         expect(page.locator('[data-testid="stException"]')).to_have_count(0)
 
@@ -74,6 +84,13 @@ with sync_playwright() as p:
             page.get_by_text("正在验证当前草稿，完成后结果会显示在这里。", exact=True)
         ).to_be_visible()
         expect(page.get_by_role("progressbar")).to_have_count(0)
+        expect(
+            page.get_by_text("参考程序已通过全部样例和测试点。验证未保存题目。", exact=True)
+        ).to_be_visible(timeout=10000)
+        page.wait_for_timeout(300)
+        expect(page.locator(".st-key-oj_agent_ai_bottom")).to_have_count(1)
+        expect(page.get_by_role("textbox", name="修改意见", exact=True)).to_have_count(1)
+        expect(page.locator(".st-key-oj_agent_editor_actions")).to_have_count(1)
         # Draft survives tab switches and the unsaved-changes navigation guard.
         statement_field.fill("未保存的手工修改")
         statement_field.press("Tab")
@@ -98,5 +115,14 @@ with sync_playwright() as p:
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
         page.screenshot(path=str(OUTPUT / f"stopped-{size}.png"), full_page=True)
     browser.close()
+
+bad_messages = (
+    "Encountered two children with the same key",
+    "Cannot set a node at a delta path",
+    "Could not find fragment with id",
+)
+assert not [
+    message for message in frontend_errors if any(marker in message for marker in bad_messages)
+], frontend_errors
 
 print(f"Desktop/mobile checks passed: {OUTPUT.resolve()}")

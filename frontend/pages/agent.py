@@ -17,12 +17,6 @@ from frontend.components.ui import (
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
-VIEW_LOADING_TEXT = {
-    "模型配置": "正在加载模型配置...",
-    "新建出题": "正在加载命题选项...",
-    "出题记录": "正在加载出题记录...",
-    "任务详情": "正在加载任务进度...",
-}
 
 
 def format_cost(value: Any) -> str:
@@ -221,7 +215,14 @@ def _config(api: ApiClient) -> None:
 
 def _select_agent_view() -> None:
     from frontend.pages.agent_draft import navigate
+
     navigate(agent_active_view=st.session_state.agent_nav_selection)
+
+
+def _open_agent_settings() -> None:
+    from frontend.pages.agent_draft import navigate
+
+    navigate(agent_active_view="模型配置")
 
 
 def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
@@ -249,11 +250,8 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
         label_visibility="collapsed",
         on_change=_select_agent_view,
     )
-    if settings.button("模型配置", key="agent_settings_link"):
-        from frontend.pages.agent_draft import navigate
-        navigate(agent_active_view="模型配置")
-        st.rerun()
-    with st.container(key="agent_view_content"), st.spinner(VIEW_LOADING_TEXT[view]):
+    settings.button("模型配置", key="agent_settings_link", on_click=_open_agent_settings)
+    with st.container(key="agent_view_content"):
         if view == "模型配置":
             _config(api)
         elif view == "新建出题":

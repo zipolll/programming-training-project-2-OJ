@@ -1104,12 +1104,13 @@ def test_agent_problem_type_uses_common_and_custom_options() -> None:
         "图论",
         "动态规划",
     ]
-    assert agent_page.VIEW_LOADING_TEXT == {
-        "模型配置": "正在加载模型配置...",
-        "新建出题": "正在加载命题选项...",
-        "出题记录": "正在加载出题记录...",
-        "任务详情": "正在加载任务进度...",
-    }
+    agent_sources = "\n".join(
+        (Path(__file__).parents[1] / "frontend" / "pages" / name).read_text(encoding="utf-8")
+        for name in ("agent.py", "agent_draft.py", "agent_workspace.py")
+    )
+    # Full-view spinners keep the previous render stale for the whole request
+    # window and amplify Streamlit's stale-DOM cleanup race (#8360).
+    assert "st.spinner" not in agent_sources
 
 
 def test_status_badges_use_distinct_accessible_classes(

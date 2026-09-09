@@ -57,15 +57,19 @@ def navigate(**route):
 def navigation_dialog():
     st.write("离开后将放弃当前页面草稿。请先保存，或选择放弃修改后离开。")
     stay, leave = st.columns(2)
-    if stay.button("留在当前页面"):
-        st.session_state.pop("agent_pending_navigation", None)
-        st.rerun()
-    if leave.button("放弃修改并离开"):
-        tid = st.query_params.get("agent_task_id")
-        st.session_state.pop(f"agent_working_{tid}", None)
-        route = st.session_state.pop("agent_pending_navigation")
-        update_route(**route)
-        st.rerun()
+    stay.button("留在当前页面", on_click=_stay_on_page)
+    leave.button("放弃修改并离开", on_click=_discard_and_leave)
+
+
+def _stay_on_page():
+    st.session_state.pop("agent_pending_navigation", None)
+
+
+def _discard_and_leave():
+    tid = st.query_params.get("agent_task_id")
+    st.session_state.pop(f"agent_working_{tid}", None)
+    route = st.session_state.pop("agent_pending_navigation")
+    update_route(**route)
 
 
 def browser_guard(state):
@@ -116,6 +120,7 @@ def request(api, task, state, action, feedback=""):
     state.pop("submission", None)
     if action in ("quick-validate", "refine"):
         state["job"] = result["task_id"]
+        st.session_state.pop("agent_poll_completed_task", None)
         state["seed"] = deepcopy(state["content"])
         state["epoch"] += 1
         if action == "quick-validate":
@@ -128,7 +133,6 @@ def request(api, task, state, action, feedback=""):
         )
         st.session_state.pop(f"agent_working_{result['task_id']}", None)
         update_route(agent_task_id=result["task_id"], agent_workspace_mode="编辑")
-    st.rerun()
 
 
 def receive_job(api, task, state, record):

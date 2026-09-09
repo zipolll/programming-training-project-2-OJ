@@ -44,15 +44,28 @@ class AgentPreviewApi:
             return {"data": []}
         if path == "/agent/tasks/fixture-check":
             check = self.task(1)
+            complete = st.session_state.get("fixture_validation_polls", 0) >= 3
             check.update(
                 task_id="fixture-check",
                 operation="validate",
                 workspace_kind="check",
-                status="running",
-                stage="execute_reference",
-                progress=70,
-                validation_report=None,
-                input_draft=check["final_problem"],
+                status="success" if complete else "running",
+                stage="finalize" if complete else "execute_reference",
+                progress=100 if complete else 70,
+                validation_report=(
+                    {
+                        "reference_all_passed": True,
+                        "samples_consistent": True,
+                        "blocking_errors": [],
+                        "unresolved_risks": [],
+                        "tool_evidence": [],
+                    }
+                    if complete
+                    else None
+                ),
+                input_draft=st.session_state.get(
+                    "fixture_validation_draft", check["final_problem"]
+                ),
                 feedback="",
             )
             return {"data": check}
@@ -79,10 +92,36 @@ class AgentPreviewApi:
                 versions.append(version)
             from backend.app.modules.agent.repository import AgentRepository
 
-            record = AgentRepository.summarize_record(versions)
+            attempts = versions
+            working = st.session_state.get("agent_working_fixture-2", {})
+            validation_started = st.session_state.get("fixture_validation_started") or (
+                working.get("job") == "fixture-check"
+            )
+            if self.status == "success" and validation_started:
+                polls = st.session_state.get("fixture_validation_polls", 0) + 1
+                check_state = "success" if polls >= 3 else "running"
+                st.session_state["fixture_validation_polls"] = polls
+                check = {
+                    **versions[0],
+                    "task_id": "fixture-check",
+                    "revision": 0,
+                    "workspace_kind": "check",
+                    "content_version_id": None,
+                    "operation": "validate",
+                    "base_task_id": "fixture-2",
+                    "parent_task_id": "fixture-2",
+                    "status": check_state,
+                    "stage": "finalize" if check_state == "success" else "execute_reference",
+                    "progress": 100 if check_state == "success" else 70,
+                    "updated_at": "2026-09-07T10:30:00+00:00",
+                    "has_content": False,
+                    "usable": False,
+                }
+                attempts = [*versions, check]
+            record = AgentRepository.summarize_record(attempts)
             if path == "/agent/records":
                 return {"data": {"items": [record], "total": 1, "difficulties": ["中等"]}}
-            return {"data": {**record, "versions": versions}}
+            return {"data": {**record, "versions": versions, "attempts": attempts}}
         if path == "/problems/":
             return {"data": [PROBLEM]}
         raise AssertionError(f"Unexpected fixture request: {path}")
@@ -153,6 +192,9 @@ class AgentPreviewApi:
     def post(self, path, json=None):
         st.session_state["fixture_saved"] = (path, json)
         if path.endswith("/quick-validate"):
+            st.session_state["fixture_validation_started"] = True
+            st.session_state["fixture_validation_polls"] = 0
+            st.session_state["fixture_validation_draft"] = json["generated"]
             return {"data": {"task_id": "fixture-check"}}
         return {"data": {"task_id": "fixture-2", "problem_id": PROBLEM["id"]}}
 
