@@ -73,10 +73,16 @@ class JudgeService:
                         testcase.output,
                         language.expand_run(source, executable),
                         workspace,
-                        (problem.time_limit if "time_limit" in problem.model_fields_set
-                         else language.time_limit),
-                        (problem.memory_limit if "memory_limit" in problem.model_fields_set
-                         else language.memory_limit),
+                        (
+                            problem.time_limit
+                            if "time_limit" in problem.model_fields_set
+                            else language.time_limit
+                        ),
+                        (
+                            problem.memory_limit
+                            if "memory_limit" in problem.model_fields_set
+                            else language.memory_limit
+                        ),
                     )
                     results.append(result)
                     captured_stdout = self._bounded_join(captured_stdout, stdout)
@@ -145,6 +151,7 @@ class JudgeService:
                     time=outcome.time,
                     memory=outcome.memory,
                     error_summary=summary,
+                    actual_output=self._safe_summary(stdout, workspace, 2000),
                 ),
                 stdout,
                 stderr,
@@ -195,7 +202,10 @@ class JudgeService:
             memory=outcome.memory,
             testcase_results=[
                 TestcaseResult(
-                    id=index, result=TestcaseStatus.CE, time=0.0, memory=0.0,
+                    id=index,
+                    result=TestcaseStatus.CE,
+                    time=0.0,
+                    memory=0.0,
                     error_summary="编译失败，未运行",
                 )
                 for index in range(1, testcase_count + 1)

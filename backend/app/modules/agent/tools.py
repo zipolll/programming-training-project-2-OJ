@@ -97,7 +97,17 @@ class AgentTools:
         )
         return {
             "status": result.status.value,
-            "testcases": [item.model_dump(mode="json") for item in result.testcase_results],
+            "testcases": [
+                {
+                    **item.model_dump(mode="json"),
+                    **(
+                        {"actual_output": item.actual_output}
+                        if item.result is not TestcaseStatus.AC
+                        else {}
+                    ),
+                }
+                for item in result.testcase_results
+            ],
             "compile_info": result.compile_info,
         }
 
@@ -200,15 +210,48 @@ class AgentTools:
         samples["consistent"] = samples["status"] == "AC"
         tests = subset(list(range(len(generated.problem.testcases))))
         tests["all_passed"] = tests["status"] == "AC"
+        for group, original in (
+            (samples, generated.problem.samples),
+            (tests, generated.problem.testcases),
+        ):
+            for result, case in zip(group["testcases"], original, strict=False):
+                if result["result"] != "AC":
+                    result["input"] = case.input[:2000]
+                    result["expected_output"] = case.output[:2000]
+                    result["diagnostics_truncated"] = any(
+                        len(text) >= 2000
+                        for text in (case.input, case.output, result.get("actual_output", ""))
+                    )
+
+        def failure_details(results: list[dict[str, Any]], expected: list[str]) -> str:
+            details = []
+            for position, item in enumerate(results):
+                if item["result"] == "AC" or position >= len(expected):
+                    continue
+                wanted = str(expected[position]).strip()
+                if len(wanted) > 60:
+                    wanted = wanted[:60] + "…"
+                details.append(f"case #{position + 1} {item['result']} expected {wanted!r}")
+            return "; ".join(details[:5]) or "no per-case result available"
+
+        sample_outputs = [s.output for s in generated.problem.samples]
+        case_outputs = [c.output for c in generated.problem.testcases]
         if reference_only:
+            blocking = []
+            if not samples["consistent"]:
+                blocking.append(
+                    "参考程序未通过样例：" + failure_details(samples["testcases"], sample_outputs)
+                )
+            if not tests["all_passed"]:
+                blocking.append(
+                    "参考程序未通过测试点：" + failure_details(tests["testcases"], case_outputs)
+                )
             return ValidationReport(
                 schema_valid=schema["valid"],
                 reference_all_passed=tests["all_passed"],
                 samples_consistent=samples["consistent"],
                 testcase_count=len(generated.problem.testcases),
-                blocking_errors=[]
-                if samples["consistent"] and tests["all_passed"]
-                else ["参考程序未通过全部样例和测试点"],
+                blocking_errors=blocking,
                 tool_evidence=[
                     {"tool": "validate_sample_outputs", "result": samples},
                     {"tool": "validate_testcases", "result": tests},
@@ -219,14 +262,27 @@ class AgentTools:
         if not schema["valid"]:
             blocking.append("problem schema is invalid")
         if not samples["consistent"]:
-            blocking.append("sample outputs do not match the reference solution")
+            blocking.append(
+                "sample outputs do not match the reference solution: "
+                + failure_details(samples["testcases"], sample_outputs)
+            )
         if not tests["all_passed"]:
-            blocking.append("reference solution does not pass every testcase")
+            blocking.append(
+                "reference solution does not pass every testcase: "
+                + failure_details(tests["testcases"], case_outputs)
+            )
         if len(generated.problem.testcases) < 3:
             blocking.append("at least three testcases are required for AI import")
         detections = counterexamples["detections"]
         distinguishes = bool(detections) and all(detections.values())
         risks = []
+        slowest = max((item.get("time") or 0 for item in tests["testcases"]), default=0)
+        if slowest > generated.problem.time_limit * 0.8:
+            risks.append(
+                f"reference solution takes {slowest:.2f}s of the "
+                f"{generated.problem.time_limit:.1f}s limit on the slowest case; "
+                "reduce complexity or it may time out after import"
+            )
         if not detections:
             risks.append("no counterexample solution was supplied")
         elif not distinguishes:

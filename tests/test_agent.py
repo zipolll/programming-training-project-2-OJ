@@ -1293,6 +1293,60 @@ def test_editor_ai_uses_unsaved_draft_without_creating_content_version(agent_cli
     assert client.get(f"/api/agent/records/{base['task_id']}").json()["data"]["version_count"] == 1
 
 
+def test_refine_output_must_pass_reference_check(agent_client):
+    client, _, requests = agent_client
+    base = _new_success(client)
+    broken = deepcopy(generated_problem())
+    broken["problem"]["testcases"][1]["output"] = "999\n"
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        calls["count"] += 1
+        content = broken if calls["count"] == 1 else generated_problem()
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(content)}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(handler)
+    response = client.post(
+        f"/api/agent/tasks/{base['task_id']}/refine",
+        json={
+            "feedback": "修复测试点",
+            "workspace_draft": base["final_problem"],
+            "request_id": "refine-fix",
+        },
+    )
+    assert response.status_code == 200, response.text
+    job = wait_terminal(client, response.json()["data"]["task_id"])
+    assert job["status"] == "success" and calls["count"] == 2
+    assert job["validation_report"]["reference_all_passed"] is True
+    assert job["validation_report"]["blocking_errors"] == []
+    assert job["draft"]["problem"]["testcases"][1]["output"] == "0\n"
+    revision_prompt = json.loads(json.loads(requests[-1].content)["messages"][1]["content"])
+    assert any(
+        "case #2" in failure and "expected" in failure
+        for failure in revision_prompt["validation_failures"]
+    )
+    assert (
+        client.get(f"/api/agent/records/{base['record_id']}").json()["data"]["version_count"] == 1
+    )
+
+
+def test_validation_report_lists_failing_testcases(agent_client):
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    generated = GeneratedProblem.model_validate(generated_problem())
+    generated.problem.testcases[1].output = "999\n"
+    report = client.portal.call(tools.build_validation_report, generated)
+    assert not report.reference_all_passed
+    assert any("case #2" in error and "expected '999'" in error for error in report.blocking_errors)
+
+
 def test_editor_check_busy_deadline_and_cleanup(agent_client, monkeypatch):
     from backend.app.modules.agent import task_manager
 
@@ -1349,6 +1403,42 @@ def test_editor_routes_are_owner_isolated(agent_client):
         ).status_code
         == 404
     )
+
+
+def test_generation_repairs_using_actual_failed_output(agent_client):
+    client, _, requests = agent_client
+    client.put("/api/agent/config", json=config_payload(max_iterations=2))
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        content = generated_problem()
+        if len(calls) == 1:
+            content["problem"]["testcases"][1]["output"] = "999\n"
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(content)}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            },
+        )
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(respond)
+    tid = client.post("/api/agent/tasks", json=authoring_payload()).json()["data"]["task_id"]
+    task = wait_terminal(client, tid)
+    assert task["status"] == "success" and len(calls) == 2
+    prompt = json.loads(json.loads(calls[1].content)["messages"][1]["content"])
+    failed = next(x for x in prompt["execution_diagnostics"] if x["tool"] == "validate_testcases")
+    assert failed["failed_cases"][0]["actual_output"].strip() == "0"
+    assert failed["failed_cases"][0]["expected_output"].strip() == "999"
+    assert failed["failed_cases"][0]["input"].strip() == "0"
+    from backend.app.modules.judge.models import TestcaseResult, TestcaseStatus
+
+    private = TestcaseResult(
+        id=1, result=TestcaseStatus.WA, time=0, memory=0, actual_output="hidden output"
+    )
+    assert "actual_output" not in private.model_dump(mode="json")
+    assert "hidden output" not in repr(private)
 
 
 def test_ui_validation_clears_stale_result_while_new_check_runs(agent_client, monkeypatch):

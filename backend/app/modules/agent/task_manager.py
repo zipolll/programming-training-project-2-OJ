@@ -494,11 +494,49 @@ class AgentTaskManager:
             )
             await self.repository.store_draft(task_id, generated)
             if task.workspace_kind == "refine":
+                # An AI revision is only handed back after its reference
+                # solution passes every sample and testcase.
+                config = await self.model_client.configuration(task.user_id)
+                report = None
+                for iteration in range(config.max_iterations):
+                    self._check(cancelled)
+                    await self._stage(task_id, "execute_reference", 62, "正在检查参考程序")
+                    report = await self.tools.build_validation_report(
+                        generated, reference_only=True
+                    )
+                    await self.repository.update_task(task_id, validation_report_json=report)
+                    if not report.blocking_errors:
+                        break
+                    if iteration + 1 >= config.max_iterations:
+                        await self._fail(
+                            task_id,
+                            "validation_failed",
+                            "AI 修改未通过参考程序检查，页面草稿已保留，可重试或手动修正。",
+                            report,
+                        )
+                        return
+                    await self._stage(
+                        task_id,
+                        "revise",
+                        90,
+                        f"Revision {iteration + 1}: repairing validation failures",
+                    )
+                    generated = await self._generate(
+                        task.user_id,
+                        task_id,
+                        task.request,
+                        context,
+                        generated,
+                        report,
+                        task.feedback,
+                    )
+                    await self.repository.store_draft(task_id, generated)
                 await self.repository.update_task(
                     task_id,
                     status=AgentStatus.SUCCESS,
                     stage="finalize",
                     progress=100,
+                    validation_report_json=report,
                     finished_at=utc_now(),
                 )
                 return
@@ -571,6 +609,16 @@ class AgentTaskManager:
                 await self.repository.store_draft(task_id, generated)
             assert report is not None
             self._check(cancelled)
+            if not (
+                report.schema_valid and report.reference_all_passed and report.samples_consistent
+            ):
+                await self._fail(
+                    task_id,
+                    "validation_failed",
+                    "Generated problem did not pass validation",
+                    report,
+                )
+                return
             await self.repository.update_task(
                 task_id,
                 status=AgentStatus.SUCCESS,
@@ -621,15 +669,40 @@ class AgentTaskManager:
             "local_context": context,
             "previous_draft": previous.model_dump(mode="json") if previous else None,
             "validation_failures": report.blocking_errors if report else [],
+            "execution_diagnostics": [
+                {
+                    "tool": evidence["tool"],
+                    "compile_info": evidence["result"].get("compile_info"),
+                    "failed_cases": [
+                        case
+                        for case in evidence["result"].get("testcases", [])
+                        if case["result"] != "AC"
+                    ][:8],
+                }
+                for evidence in (report.tool_evidence if report else [])
+                if evidence["tool"] in ("validate_sample_outputs", "validate_testcases")
+            ],
             "rules": [
                 "Return exactly the GeneratedProblem schema; no markdown.",
                 "Keep explanations concise and test data compact while preserving requested "
                 "coverage and all constraints. Produce a complete result with concise reasoning.",
                 "Provide at least three diverse testcases with exact outputs.",
+                "Check every input against its declared counts, dimensions, ranges and command "
+                "grammar. Counts must match the actual data; do not hide malformed input by "
+                "adding forgiving parsing to the reference solution.",
+                "When execution_diagnostics are present, reconcile the statement, reference "
+                "code and expected outputs. Fix erroneous code or invalid test data according "
+                "to the statement. Never blindly replace expected outputs with actual outputs, "
+                "delete failing cases, or weaken the specification to make tests pass. "
+                "Check repeated operations, dead objects, integer division and output order. "
+                "Diagnostics are bounded excerpts; previous_draft contains the full cases.",
                 "Unless the user specifies a testcase count, supply 5 compact, distinct cases. "
                 "Use exactly one typical wrong solution. Avoid verbose repeated explanations "
                 "and huge literal test arrays; use small targeted cases that expose mistakes.",
                 "Reference code reads stdin and writes stdout, without files/network/shell.",
+                "The reference solution must reproduce every sample and testcase output "
+                "exactly; mentally trace it on each case before replying, because output "
+                "whose reference fails any case is rejected and regenerated.",
                 "Include at least one syntactically valid typical wrong solution.",
                 "Nonempty explicit settings override conflicting prompt or revision feedback.",
                 "Infer unspecified knowledge, difficulty, type and limits from the user prompt.",

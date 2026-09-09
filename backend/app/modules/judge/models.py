@@ -40,6 +40,8 @@ class TestcaseResult(StrictModel):
     time: float = Field(ge=0)
     memory: float = Field(ge=0)
     error_summary: str = ""
+    # Internal authoring diagnostics; never expose hidden testcase output in public results.
+    actual_output: str = Field(default="", exclude=True, repr=False)
 
 
 class JudgeResult(StrictModel):
