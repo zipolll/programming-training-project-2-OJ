@@ -50,6 +50,9 @@ with sync_playwright() as p:
         assert max(b["y"] for b in boxes) - min(b["y"] for b in boxes) < 2
         feedback = ai.get_by_role("textbox", name="修改意见", exact=True)
         assert boxes[0]["y"] > feedback.bounding_box()["y"]
+        # The actions sit outside the conversation card, directly below it.
+        expect(ai.locator(".st-key-oj_agent_editor_actions")).to_have_count(0)
+        assert boxes[0]["y"] >= ai_box["y"] + ai_box["height"]
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
         actions.screenshot(path=str(OUTPUT / f"actions-{size}.png"))
         ai.screenshot(path=str(OUTPUT / f"conversation-{size}.png"))

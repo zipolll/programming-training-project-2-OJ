@@ -873,16 +873,16 @@ def task_monitor(api: ApiClient) -> None:
     if editing and generated:
         with st.container(key="oj_agent_ai_bottom"):
             _conversation(api, task, record, busy)
-            with st.container(
-                horizontal=True, horizontal_alignment="right", key="oj_agent_editor_actions"
-            ):
-                if st.button("验证", disabled=busy):
-                    agent_draft.request(api, task, state, "quick-validate")
-                if st.button("保存", type="primary", disabled=busy):
-                    agent_draft.request(api, task, state, "save-content")
-                if st.button("另存为新版本", disabled=busy):
-                    agent_draft.request(api, task, state, "versions")
-            agent_draft.validation_result(state)
+        with st.container(
+            horizontal=True, horizontal_alignment="right", key="oj_agent_editor_actions"
+        ):
+            if st.button("验证", disabled=busy):
+                agent_draft.request(api, task, state, "quick-validate")
+            if st.button("保存", type="primary", disabled=busy):
+                agent_draft.request(api, task, state, "save-content")
+            if st.button("另存为新版本", disabled=busy):
+                agent_draft.request(api, task, state, "versions")
+        agent_draft.validation_result(state)
     if not editing:
         with st.container(key="oj_agent_task_information"), st.expander("任务信息"):
             st.markdown("**执行历史**")
