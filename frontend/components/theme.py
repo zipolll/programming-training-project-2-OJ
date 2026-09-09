@@ -165,6 +165,18 @@ GLOBAL_CSS = r"""
   background: transparent; border: 0;
 }
 .st-key-oj_agent_retry_panel { min-width: 0; }
+.st-key-oj_agent_ai_bottom {
+  border-top: 1px solid var(--oj-line); padding-top: 24px; margin-top: 8px;
+}
+.st-key-oj_agent_ai_bottom .st-key-oj_agent_conversation { border: 0; }
+.st-key-oj_agent_ai_bottom [data-testid="stChatMessageAvatarAssistant"] {
+  background: var(--oj-tint); color: var(--oj-primary);
+}
+.st-key-oj_agent_editor_actions button { min-height: 44px; }
+.st-key-agent_unload_guard { display:none; }
+.st-key-oj_agent_ai_bottom [data-testid="stChatMessageContent"] {
+  max-width: min(80ch, calc(100% - 42px));
+}
 @media (max-width: 700px) {
   .st-key-oj_agent_composer { padding: 1rem; }
   .st-key-oj_agent_overview, .st-key-oj_agent_workspace { padding: 16px; }

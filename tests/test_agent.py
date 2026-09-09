@@ -594,46 +594,31 @@ def test_ui_prompt_settings_clear_and_history_navigation(agent_client):
     assert app.query_params["agent_task_id"] == [tid]
 
 
-def test_ui_manual_edit_save_switch_versions_and_narrow_panes(agent_client, monkeypatch):
-    from types import SimpleNamespace
-
-    from frontend.pages import agent_workspace
-
+def test_ui_shared_editor_validate_save_and_explicit_copy(agent_client):
     client, _, _ = agent_client
     task = _new_success(client)
     app = _ui(client, task["task_id"])
     app.query_params["agent_workspace_mode"] = "编辑"
     app.run()
     assert not app.exception
-    prefix = f"agent_editor_{task['task_id']}"
-    app.text_input(key=f"{prefix}_title").set_value("手动标题")
-    next(b for b in app.button if b.label == "保存新版本").click().run()
+    prefix = f"agent_editor_{task['task_id']}_0"
+    app.text_input(key=f"{prefix}_title").set_value("手动标题").run()
+    assert any(t.label == "修改意见" for t in app.text_area)
+    next(b for b in app.button if b.label == "验证").click().run()
     assert not app.exception
-    manual_id = app.query_params["agent_task_id"][0]
-    manual = client.get(f"/api/agent/tasks/{manual_id}").json()["data"]
-    assert manual["draft"]["problem"]["title"] == "手动标题"
-    app.selectbox(key="agent_version_selection").select(task["task_id"]).run()
-    assert app.query_params["agent_task_id"] == [task["task_id"]]
-    app.selectbox(key="agent_version_selection").select(manual_id).run()
-    assert app.query_params["agent_task_id"] == [manual_id]
-    monkeypatch.setattr(
-        agent_workspace, "_viewport", lambda **kwargs: SimpleNamespace(compact=True)
-    )
+    state = app.session_state[f"agent_working_{task['task_id']}"]
+    if state.get("job"):
+        wait_terminal(client, state["job"])
     app.run()
     assert not app.exception
-    assert not any(t.label == "继续修改" for t in app.text_area)
-    next(b for b in app.button if b.label == "AI 修改").click().run()
-    assert any(t.label == "继续修改" for t in app.text_area)
-    next(b for b in app.button if b.label == "返回题目").click().run()
+    next(b for b in app.button if b.label == "保存").click().run()
+    assert not app.exception and app.query_params["agent_task_id"] == [task["task_id"]]
+    current = client.get(f"/api/agent/tasks/{task['task_id']}").json()["data"]
+    assert current["final_problem"]["problem"]["title"] == "手动标题"
+    assert current["revision"] == task["revision"]
+    next(b for b in app.button if b.label == "另存为新版本").click().run()
     assert not app.exception
-    assert not any(t.label == "继续修改" for t in app.text_area)
-    next(b for b in app.button if b.label == "验证题目").click().run()
-    assert not app.exception and app.query_params["agent_task_id"] == [manual_id]
-    validated = wait_terminal(client, manual_id)
-    assert validated["status"] == "success" and validated["revision"] == manual["revision"]
-    app.run()
-    assert not app.exception
-    assert any(b.label == "导入题目" for b in app.button)
+    assert app.query_params["agent_task_id"] != [task["task_id"]]
     assert len(app.selectbox(key="agent_version_selection").options) == 2
 
 
@@ -674,36 +659,28 @@ def test_record_display_status_filters_latest_version_before_pagination(agent_cl
     assert client.get("/api/agent/records", params={"display_status": "invalid"}).status_code == 400
 
 
-def test_ui_detail_focus_editor_cancel_and_import_dialog(agent_client):
+def test_ui_unsaved_navigation_guard_and_import_dialog(agent_client):
     client, _, _ = agent_client
     task = _new_success(client)
     app = _ui(client, task["task_id"]).run()
-
-    def click(label):
-        next(b for b in app.button if b.label == label).click().run()
-        assert not app.exception
-
     assert not app.exception
-    assert not app.get("progress")
-    assert not any(t.label == "继续修改" for t in app.text_area)
-    assert not any(c.label == "我已审阅题面、参考解法和验证结果" for c in app.checkbox)
-    click("AI 修改")
-    assert any(t.label == "继续修改" for t in app.text_area)
-    click("手动编辑")
-    assert not any(t.label == "继续修改" for t in app.text_area)
-    assert [tab.label for tab in app.tabs] == ["题面与样例", "分类与限制", "解法与测试"]
-    prefix = f"agent_editor_{task['task_id']}"
-    app.text_input(key=f"{prefix}_title").set_value("不保存这个标题")
-    click("取消编辑")
-    click("手动编辑")
-    assert app.text_input(key=f"{prefix}_title").value == task["final_problem"]["problem"]["title"]
-    click("取消编辑")
-    click("导入题目")
+    assert any(t.label == "修改意见" for t in app.text_area)
+    assert not any(b.label in ("AI 修改", "手动编辑") for b in app.button)
+    next(b for b in app.button if b.label == "修改").click().run()
+    prefix = f"agent_editor_{task['task_id']}_0"
+    app.text_input(key=f"{prefix}_title").set_value("不保存这个标题").run()
+    next(b for b in app.button if b.label == "返回出题记录").click().run()
+    assert not app.exception
+    assert any(b.label == "留在当前页面" for b in app.button)
+    next(b for b in app.button if b.label == "留在当前页面").click().run()
+    assert app.text_input(key=f"{prefix}_title").value == "不保存这个标题"
+    app = _ui(client, task["task_id"]).run()
+    next(b for b in app.button if b.label == "导入题目").click().run()
+    assert not app.exception
     assert next(b for b in app.button if b.label == "确认导入").disabled
     app.checkbox(key=f"agent_confirm_{task['task_id']}").check().run()
-    click("确认导入")
-    assert app.get("link_button")
-    assert not any(b.label == "导入题目" for b in app.button)
+    next(b for b in app.button if b.label == "确认导入").click().run()
+    assert not app.exception and app.get("link_button")
 
 
 def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> None:
@@ -1112,3 +1089,229 @@ def test_recovered_queue_uses_original_creation_time(agent_client):
     task = wait_terminal(client, tid)
     assert task["error_code"] == "task_timeout" and not requests
     assert task["started_at"] is None
+
+
+def _editor_check(client, task, content, request_id="editor-check"):
+    response = client.post(
+        f"/api/agent/tasks/{task['task_id']}/quick-validate",
+        json={"generated": content, "request_id": request_id},
+    )
+    assert response.status_code == 200, response.text
+    return wait_terminal(client, response.json()["data"]["task_id"])
+
+
+def test_editor_check_and_overwrite_preserve_version_and_bind_evidence(agent_client):
+    client, _, requests = agent_client
+    base = _new_success(client)
+    content = deepcopy(base["final_problem"])
+    content["problem"]["title"] = "当前未保存草稿"
+    content["wrong_solutions"] = ["print(sum(map(int,input().split())))"]
+    before = len(requests)
+    check = _editor_check(client, base, content)
+    assert check["validation_report"]["reference_all_passed"]
+    assert check["validation_report"]["wrong_solutions_run"] == 0
+    assert check["revision"] == 0 and check["content_version_id"] is None
+    unchanged = client.get(f"/api/agent/tasks/{base['task_id']}").json()["data"]
+    assert unchanged["final_problem"] == base["final_problem"]
+    payload = {
+        "generated": content,
+        "expected_hash": base["content_hash"],
+        "check_id": check["task_id"],
+    }
+    saved = client.post(f"/api/agent/tasks/{base['task_id']}/save-content", json=payload)
+    assert saved.status_code == 200, saved.text
+    current = client.get(f"/api/agent/tasks/{base['task_id']}").json()["data"]
+    assert current["revision"] == base["revision"] and current["final_problem"] == content
+    assert current["stage"] == "finalize" and len(requests) == before
+    record = client.get(f"/api/agent/records/{base['task_id']}").json()["data"]
+    assert record["version_count"] == 1 and record["latest_task_id"] == base["task_id"]
+    stale = deepcopy(content)
+    stale["problem"]["description"] += " 再次修改"
+    response = client.post(
+        f"/api/agent/tasks/{base['task_id']}/save-content",
+        json={
+            "generated": stale,
+            "expected_hash": current["content_hash"],
+            "check_id": check["task_id"],
+        },
+    )
+    assert response.status_code == 409
+    assert (
+        client.post(
+            f"/api/agent/tasks/{base['task_id']}/save-content",
+            json={"generated": stale, "expected_hash": current["content_hash"]},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(f"/api/agent/tasks/{base['task_id']}").json()["data"]["stage"]
+        == "awaiting_validation"
+    )
+
+
+def test_editor_save_as_identical_is_explicit_and_idempotent(agent_client):
+    client, _, _ = agent_client
+    base = _new_success(client)
+    payload = {
+        "generated": base["final_problem"],
+        "expected_hash": base["content_hash"],
+        "request_id": "save-copy",
+        "force_new": True,
+    }
+    one = client.post(f"/api/agent/tasks/{base['task_id']}/versions", json=payload)
+    assert one.status_code == 200, one.text
+    two = client.post(f"/api/agent/tasks/{base['task_id']}/versions", json=payload)
+    assert one.json()["data"] == two.json()["data"]
+    new_id = one.json()["data"]["task_id"]
+    assert new_id != base["task_id"]
+    content = deepcopy(base["final_problem"])
+    content["problem"]["title"] = "仅覆盖副本"
+    current = client.get(f"/api/agent/tasks/{new_id}").json()["data"]
+    assert (
+        client.post(
+            f"/api/agent/tasks/{new_id}/save-content",
+            json={"generated": content, "expected_hash": current["content_hash"]},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(f"/api/agent/tasks/{base['task_id']}").json()["data"]["final_problem"]
+        == base["final_problem"]
+    )
+
+
+def test_editor_detects_stale_windows_and_checks_all_testcases(agent_client):
+    client, _, _ = agent_client
+    base = _new_success(client)
+    bad = deepcopy(base["final_problem"])
+    bad["problem"]["testcases"][1]["output"] = "999\n"
+    check = _editor_check(client, base, bad)
+    report = check["validation_report"]
+    assert report["samples_consistent"] and not report["reference_all_passed"]
+    assert (
+        client.post(
+            f"/api/agent/tasks/{base['task_id']}/save-content",
+            json={
+                "generated": bad,
+                "expected_hash": base["content_hash"],
+                "check_id": check["task_id"],
+            },
+        ).status_code
+        == 200
+    )
+    other = deepcopy(base["final_problem"])
+    other["problem"]["title"] = "来自旧窗口"
+    assert (
+        client.post(
+            f"/api/agent/tasks/{base['task_id']}/save-content",
+            json={"generated": other, "expected_hash": base["content_hash"]},
+        ).status_code
+        == 409
+    )
+
+
+def test_editor_import_requires_explicit_sync_after_overwrite(agent_client):
+    client, _, _ = agent_client
+    base = _new_success(client)
+    path = f"/api/agent/tasks/{base['task_id']}"
+    assert client.post(path + "/import", json={"confirm": True}).status_code == 200
+    content = deepcopy(base["final_problem"])
+    content["problem"]["title"] = "尚未同步到题库"
+    check = _editor_check(client, base, content)
+    assert (
+        client.post(
+            path + "/save-content",
+            json={
+                "generated": content,
+                "expected_hash": base["content_hash"],
+                "check_id": check["task_id"],
+            },
+        ).status_code
+        == 200
+    )
+    current = client.get(path).json()["data"]
+    assert not current["import_synced"] and current["imported_problem_id"] == "AI_SUM_1"
+    assert (
+        client.get("/api/problems/AI_SUM_1").json()["data"]["title"] != content["problem"]["title"]
+    )
+    assert client.post(path + "/import", json={"confirm": True}).status_code == 409
+    assert (
+        client.post(
+            path + "/import",
+            json={"confirm": True, "update_existing": True, "problem_id": "AI_SUM_1"},
+        ).status_code
+        == 200
+    )
+    assert client.get(path).json()["data"]["import_synced"]
+    assert (
+        client.get("/api/problems/AI_SUM_1").json()["data"]["title"] == content["problem"]["title"]
+    )
+
+
+def test_editor_ai_uses_unsaved_draft_without_creating_content_version(agent_client):
+    client, _, requests = agent_client
+    base = _new_success(client)
+    unsaved = deepcopy(base["final_problem"])
+    unsaved["problem"]["description"] += " 手工但尚未保存的条件"
+    response = client.post(
+        f"/api/agent/tasks/{base['task_id']}/refine",
+        json={"feedback": "增加解释", "workspace_draft": unsaved, "request_id": "ai-draft"},
+    )
+    assert response.status_code == 200, response.text
+    job = wait_terminal(client, response.json()["data"]["task_id"])
+    assert job["status"] == "success" and job["draft"] and job["revision"] == 0
+    prompt = json.loads(json.loads(requests[-1].content)["messages"][1]["content"])
+    assert prompt["previous_draft"] == unsaved
+    current = client.get(f"/api/agent/tasks/{base['task_id']}").json()["data"]
+    assert current["final_problem"] == base["final_problem"]
+    assert client.get(f"/api/agent/records/{base['task_id']}").json()["data"]["version_count"] == 1
+
+
+def test_editor_check_busy_deadline_and_cleanup(agent_client, monkeypatch):
+    from backend.app.modules.agent import task_manager
+
+    client, _, _ = agent_client
+    base = _new_success(client)
+    manager = client.app.state.agent_task_manager
+    cancelled = []
+
+    async def slow_check(generated, *, reference_only=False):
+        assert reference_only
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.append(True)
+
+    monkeypatch.setattr(task_manager, "TASK_TIME_LIMIT_SECONDS", 0.5)
+    monkeypatch.setattr(manager.tools, "build_validation_report", slow_check)
+    path = f"/api/agent/tasks/{base['task_id']}"
+    payload = {"generated": base["final_problem"], "request_id": "slow-check"}
+    response = client.post(path + "/quick-validate", json=payload)
+    assert response.status_code == 200
+    repeated = client.post(path + "/quick-validate", json=payload)
+    assert repeated.json()["data"]["task_id"] == response.json()["data"]["task_id"]
+    assert (
+        client.post(
+            path + "/save-content",
+            json={"generated": base["final_problem"], "expected_hash": base["content_hash"]},
+        ).status_code
+        == 409
+    )
+    job = wait_terminal(client, response.json()["data"]["task_id"])
+    assert job["error_code"] == "task_timeout" and cancelled
+    assert client.get(path).json()["data"]["final_problem"] == base["final_problem"]
+
+
+def test_editor_routes_are_owner_isolated(agent_client):
+    client, _, _ = agent_client
+    base = _new_success(client)
+    path = f"/api/agent/tasks/{base['task_id']}"
+    client.post("/api/auth/logout")
+    client.post("/api/users/register", json={"username": "editor-other", "password": "secret123"})
+    client.post("/api/auth/login", json={"username": "editor-other", "password": "secret123"})
+    assert client.post(path + "/quick-validate", json={
+        "generated": base["final_problem"], "request_id": "foreign-check"
+    }).status_code == 404
+    assert client.post(path + "/save-content", json={
+        "generated": base["final_problem"], "expected_hash": base["content_hash"]
+    }).status_code == 404

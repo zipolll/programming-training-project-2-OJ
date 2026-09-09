@@ -255,6 +255,44 @@ class AgentTaskManager:
             return await self.validate_version(user_id, saved.task_id)
         return saved.task_id
 
+    async def quick_validate(
+        self,
+        user_id: int,
+        task_id: str,
+        generated: GeneratedProblem,
+        request_id: str,
+        *,
+        feedback: str = "",
+    ) -> str:
+        """Stage a background editor job without creating a content version."""
+        task = await self.repository.get_task(task_id)
+        if task is None or task.user_id != user_id:
+            raise LookupError("agent task not found")
+        kind = "refine" if feedback else "check"
+        if kind == "refine":
+            await self.model_client.configuration(user_id)
+        new_id = str(uuid5(NAMESPACE_URL, f"editor-job:{user_id}:{request_id}"))
+        # Current editor metadata takes precedence over stale original settings.
+        data = task.request.model_dump(exclude_unset=True)
+        for key in ("difficulty", "problem_type", "time_limit", "memory_limit"):
+            data[key] = getattr(generated.problem, key)
+        data["required_knowledge"] = generated.problem.tags
+        data["testcase_count"] = len(generated.problem.testcases)
+        await self.repository.create_task(
+            new_id,
+            user_id,
+            AuthoringRequest.model_validate(data),
+            parent_task_id=task_id,
+            base_task_id=task_id,
+            operation="refine" if feedback else "validate",
+            currency=task.currency,
+            workspace_kind=kind,
+            input_draft=generated,
+            feedback=feedback,
+        )
+        await self.enqueue(new_id)
+        return new_id
+
     async def validate_version(self, user_id: int, task_id: str) -> str:
         async with self._validation_lock:
             task = await self.repository.get_task(task_id)
@@ -384,6 +422,21 @@ class AgentTaskManager:
             started_at=utc_now(),
         )
         try:
+            if task.workspace_kind == "check":
+                assert task.input_draft is not None
+                await self._stage(task_id, "execute_reference", 62, "运行样例与全部测试点")
+                report = await self.tools.build_validation_report(
+                    task.input_draft, reference_only=True
+                )
+                await self.repository.update_task(
+                    task_id,
+                    status=AgentStatus.SUCCESS,
+                    stage="finalize",
+                    progress=100,
+                    validation_report_json=report,
+                    finished_at=utc_now(),
+                )
+                return
             if task.validation_only or task.operation == "validate":
                 assert task.draft is not None
                 await self._stage(task_id, "execute_reference", 62, "正在验证已保存的题目")
@@ -429,7 +482,7 @@ class AgentTaskManager:
                 f"Retrieved {len(context)} bounded local problem summaries",
             )
             base = await self.repository.get_task(task.base_task_id) if task.base_task_id else None
-            previous = (base.final_problem or base.draft) if base else None
+            previous = task.input_draft or ((base.final_problem or base.draft) if base else None)
             generated = await self._generate(
                 task.user_id,
                 task_id,
@@ -440,6 +493,15 @@ class AgentTaskManager:
                 task.feedback,
             )
             await self.repository.store_draft(task_id, generated)
+            if task.workspace_kind == "refine":
+                await self.repository.update_task(
+                    task_id,
+                    status=AgentStatus.SUCCESS,
+                    stage="finalize",
+                    progress=100,
+                    finished_at=utc_now(),
+                )
+                return
             await self.repository.update_task(
                 task_id,
                 effective_requirements_json=self._effective(generated, task.request),

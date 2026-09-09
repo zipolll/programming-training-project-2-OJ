@@ -113,10 +113,6 @@ class AgentTools:
         result = await self.execute_reference_solution(generated, problem)
         return {"consistent": result["status"] == "AC", **result}
 
-    async def validate_testcases(self, generated: GeneratedProblem) -> dict[str, Any]:
-        result = await self.execute_reference_solution(generated)
-        return {"all_passed": result["status"] == "AC", **result}
-
     async def evaluate_counterexamples(self, generated: GeneratedProblem) -> dict[str, Any]:
         detections: dict[str, list[int]] = {}
         for index, code in enumerate(generated.wrong_solutions[:5], start=1):
@@ -150,7 +146,12 @@ class AgentTools:
             "maximum_input_bytes": max(sizes, default=0),
         }
 
-    async def build_validation_report(self, generated: GeneratedProblem) -> ValidationReport:
+    async def build_validation_report(
+        self,
+        generated: GeneratedProblem,
+        *,
+        reference_only: bool = False,
+    ) -> ValidationReport:
         schema = await self.validate_problem_schema(generated.problem.model_dump(mode="json"))
         # Compile the reference once and reuse identical sample/test input-output pairs.
         cases = list(generated.problem.testcases)
@@ -167,10 +168,13 @@ class AgentTools:
                     generated.problem.model_copy(update={"testcases": cases}),
                 )
             ),
-            asyncio.create_task(self.evaluate_counterexamples(generated)),
         ]
+        if not reference_only:
+            jobs.append(asyncio.create_task(self.evaluate_counterexamples(generated)))
         try:
-            reference, counterexamples = await asyncio.gather(*jobs)
+            results = await asyncio.gather(*jobs)
+            reference = results[0]
+            counterexamples = results[1] if len(results) > 1 else {"run": 0, "detections": {}}
         finally:
             for job in jobs:
                 if not job.done():
@@ -196,6 +200,20 @@ class AgentTools:
         samples["consistent"] = samples["status"] == "AC"
         tests = subset(list(range(len(generated.problem.testcases))))
         tests["all_passed"] = tests["status"] == "AC"
+        if reference_only:
+            return ValidationReport(
+                schema_valid=schema["valid"],
+                reference_all_passed=tests["all_passed"],
+                samples_consistent=samples["consistent"],
+                testcase_count=len(generated.problem.testcases),
+                blocking_errors=[]
+                if samples["consistent"] and tests["all_passed"]
+                else ["参考程序未通过全部样例和测试点"],
+                tool_evidence=[
+                    {"tool": "validate_sample_outputs", "result": samples},
+                    {"tool": "validate_testcases", "result": tests},
+                ],
+            )
         coverage = await self.analyze_test_coverage(generated.problem)
         blocking = []
         if not schema["valid"]:

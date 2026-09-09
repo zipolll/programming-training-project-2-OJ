@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from backend.app.core.responses import ApiResponse
 from backend.app.core.routing import CourseRoute
 from backend.app.modules.agent.client import ModelClientError, OpenAICompatibleClient
+from backend.app.modules.agent.content import content_hash
 from backend.app.modules.agent.crypto import CredentialCipher, CredentialUnavailableError, mask_key
 from backend.app.modules.agent.models import (
     AgentConfigUpdate,
@@ -18,10 +19,13 @@ from backend.app.modules.agent.models import (
     RefineRequest,
     RetryRequest,
     SaveVersionRequest,
+    WorkspaceCheckRequest,
+    WorkspaceSaveRequest,
     validate_provider_url,
 )
 from backend.app.modules.agent.repository import AgentRepository, RecordBusyError
 from backend.app.modules.agent.task_manager import AgentTaskFinishedError, AgentTaskManager
+from backend.app.modules.agent.workspace import save_editor_content
 from backend.app.modules.logs.audit_service import AuditService
 from backend.app.modules.problems.service import (
     ProblemAlreadyExistsError,
@@ -57,6 +61,7 @@ async def get_audit_service(request: Request) -> AuditService:
 def _task_data(task: Any) -> dict[str, Any]:
     data = task.model_dump(mode="json", exclude={"user_id"})
     data["request"] = task.request.model_dump(mode="json", exclude_unset=True)
+    data["content_hash"] = content_hash(task.final_problem or task.draft)
     return data
 
 
@@ -219,7 +224,7 @@ async def get_record(
     for version in versions:
         if version["has_content"]:
             key = version["content_version_id"] or version["task_id"]
-            if key not in grouped or version["usable"] >= grouped[key]["usable"]:
+            if key not in grouped or version["task_id"] == key:
                 grouped[key] = version
     content_versions = sorted(grouped.values(), key=lambda v: v["revision"])
     return ApiResponse(
@@ -244,7 +249,11 @@ async def get_task(
         is_admin=current_user.role is UserRole.ADMIN,
     )
     return ApiResponse(
-        data={**_task_data(task), "imported_problem_id": await repository.get_import(task_id)}
+        data={
+            **_task_data(task),
+            "imported_problem_id": await repository.get_import(task_id),
+            "import_synced": await repository.import_synced(task_id),
+        }
     )
 
 
@@ -290,12 +299,20 @@ async def refine_task(
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
-        new_task_id = await manager.refine(
-            current_user.id,
-            task_id,
-            payload.feedback,
-            payload.request,
-        )
+        if payload.workspace_draft is not None:
+            if not payload.request_id:
+                raise ValueError("草稿修改需要请求标识。")
+            new_task_id = await manager.quick_validate(
+                current_user.id,
+                task_id,
+                payload.workspace_draft,
+                payload.request_id,
+                feedback=payload.feedback,
+            )
+        else:
+            new_task_id = await manager.refine(
+                current_user.id, task_id, payload.feedback, payload.request
+            )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="agent task not found") from exc
     except ModelClientError as exc:
@@ -335,12 +352,22 @@ async def save_version(
     manager: Annotated[AgentTaskManager, Depends(get_manager)],
 ) -> ApiResponse:
     try:
-        new_id = await manager.save_version(
-            current_user.id,
-            task_id,
-            payload.generated,
-            validate=payload.validate_now,
-        )
+        if payload.force_new:
+            if not payload.expected_hash or not payload.request_id:
+                raise ValueError("另存需要原内容指纹和请求标识。")
+            new_id = await save_editor_content(
+                manager.repository,
+                current_user.id,
+                task_id,
+                payload.generated,
+                payload.expected_hash,
+                payload.check_id,
+                payload.request_id,
+            )
+        else:
+            new_id = await manager.save_version(
+                current_user.id, task_id, payload.generated, validate=payload.validate_now
+            )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="agent task not found") from exc
     except RecordBusyError as exc:
@@ -376,6 +403,53 @@ async def validate_version(
     return ApiResponse(data={"task_id": new_id, "status": saved.status.value})
 
 
+@router.post("/tasks/{task_id}/save-content", response_model=ApiResponse)
+async def save_content(
+    task_id: str,
+    payload: WorkspaceSaveRequest,
+    current_user: Annotated[User, Depends(require_login)],
+    manager: Annotated[AgentTaskManager, Depends(get_manager)],
+) -> ApiResponse:
+    try:
+        await save_editor_content(
+            manager.repository,
+            current_user.id,
+            task_id,
+            payload.generated,
+            payload.expected_hash,
+            payload.check_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="agent task not found") from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    saved = await manager.repository.get_task(task_id)
+    return ApiResponse(
+        data={
+            "task_id": task_id,
+            "status": "draft" if saved.stage == "awaiting_validation" else saved.status.value,
+        }
+    )
+
+
+@router.post("/tasks/{task_id}/quick-validate", response_model=ApiResponse)
+async def quick_validate(
+    task_id: str,
+    payload: WorkspaceCheckRequest,
+    current_user: Annotated[User, Depends(require_login)],
+    manager: Annotated[AgentTaskManager, Depends(get_manager)],
+) -> ApiResponse:
+    try:
+        result = await manager.quick_validate(
+            current_user.id, task_id, payload.generated, payload.request_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="agent task not found") from exc
+    except RecordBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApiResponse(data={"task_id": result, "status": "pending"})
+
+
 @router.post("/tasks/{task_id}/import", response_model=ApiResponse)
 async def import_task(
     task_id: str,
@@ -387,10 +461,19 @@ async def import_task(
 ) -> ApiResponse:
     task = await _owned_task(repository, task_id, current_user.id)
     previous = await repository.get_import(task_id)
-    if previous:
+    if previous and await repository.import_synced(task_id):
         return ApiResponse(msg="already imported", data={"problem_id": previous})
     if not payload.confirm:
         raise HTTPException(status_code=400, detail="manual confirmation is required")
+    versions = await repository.record_versions(current_user.id, task.record_id)
+    if any(v["status"] in ("pending", "running") for v in versions):
+        raise HTTPException(status_code=409, detail="请等待当前执行结束后导入。")
+    if previous and (
+        not payload.update_existing or (payload.problem_id and payload.problem_id != previous)
+    ):
+        raise HTTPException(
+            status_code=409, detail="此版本已有导入目标，请更新原题或先另存新版本。"
+        )
     if (
         task.status is not AgentStatus.SUCCESS
         or task.final_problem is None
@@ -423,7 +506,7 @@ async def import_task(
         raise HTTPException(status_code=409, detail="problem id already exists") from exc
     except ProblemNotFoundError as exc:
         raise HTTPException(status_code=404, detail="problem not found for update") from exc
-    await repository.record_import(task_id, problem.id)
+    await repository.record_import(task_id, problem.id, content_hash(task.final_problem))
     await audit.record(
         actor_user_id=current_user.id,
         action="import_agent_problem",

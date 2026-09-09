@@ -241,6 +241,10 @@ class Database:
                 ("validation_only", "INTEGER NOT NULL DEFAULT 0"),
                 ("execution_queued_at", "TEXT"),
                 ("content_version_id", "TEXT"),
+                ("workspace_kind", "TEXT NOT NULL DEFAULT ''"),
+                ("input_draft_json", "TEXT"),
+                ("save_signature", "TEXT"),
+                ("current_content_hash", "TEXT"),
             ):
                 if name not in task_columns:
                     await connection.execute(
@@ -268,11 +272,15 @@ class Database:
             await connection.execute(
                 "UPDATE agent_tasks SET content_version_id=task_id "
                 "WHERE content_version_id IS NULL "
-                "AND (draft_json IS NOT NULL OR final_problem_json IS NOT NULL)"
+                "AND workspace_kind='' AND (draft_json IS NOT NULL OR final_problem_json"
+                " IS NOT NULL)"
             )
             await connection.execute(
                 "UPDATE agent_tasks SET validation_only=1 WHERE operation='validate'"
             )
+            cursor = await connection.execute("PRAGMA table_info(agent_imports)")
+            if "content_hash" not in {row[1] for row in await cursor.fetchall()}:
+                await connection.execute("ALTER TABLE agent_imports ADD COLUMN content_hash TEXT")
             await connection.commit()
 
     async def migrate_agent_config(self) -> None:

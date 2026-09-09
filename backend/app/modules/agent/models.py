@@ -111,6 +111,8 @@ class AuthoringRequest(StrictModel):
 class RefineRequest(StrictModel):
     feedback: str = Field(min_length=1, max_length=10000)
     request: AuthoringRequest | None = None
+    workspace_draft: "GeneratedProblem | None" = None
+    request_id: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("feedback")
     @classmethod
@@ -136,6 +138,21 @@ class GeneratedProblem(StrictModel):
 class SaveVersionRequest(StrictModel):
     generated: GeneratedProblem
     validate_now: bool = Field(default=False, alias="validate")
+    force_new: bool = False
+    expected_hash: str | None = None
+    check_id: str | None = None
+    request_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class WorkspaceSaveRequest(StrictModel):
+    generated: GeneratedProblem
+    expected_hash: str = Field(min_length=64, max_length=64)
+    check_id: str | None = None
+
+
+class WorkspaceCheckRequest(StrictModel):
+    generated: GeneratedProblem
+    request_id: str = Field(min_length=1, max_length=100)
 
 
 class ValidationReport(StrictModel):
@@ -165,6 +182,8 @@ class AgentTask(StrictModel):
     effective_requirements: dict[str, Any] = Field(default_factory=dict)
     revision: int
     content_version_id: str | None = None
+    workspace_kind: str = ""
+    input_draft: GeneratedProblem | None = None
     validation_only: bool = False
     execution_queued_at: datetime | None = None
     status: AgentStatus

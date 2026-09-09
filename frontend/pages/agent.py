@@ -14,7 +14,6 @@ from frontend.components.ui import (
     page_header,
     section_header,
 )
-from frontend.navigation import update_route
 
 TERMINAL = {"success", "error", "cancelled"}
 COMMON_CURRENCIES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"]
@@ -221,7 +220,8 @@ def _config(api: ApiClient) -> None:
 
 
 def _select_agent_view() -> None:
-    update_route(agent_active_view=st.session_state.agent_nav_selection)
+    from frontend.pages.agent_draft import navigate
+    navigate(agent_active_view=st.session_state.agent_nav_selection)
 
 
 def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
@@ -250,7 +250,8 @@ def render_agent(api: ApiClient, *, embedded: bool = False) -> None:
         on_change=_select_agent_view,
     )
     if settings.button("模型配置", key="agent_settings_link"):
-        update_route(agent_active_view="模型配置")
+        from frontend.pages.agent_draft import navigate
+        navigate(agent_active_view="模型配置")
         st.rerun()
     with st.container(key="agent_view_content"), st.spinner(VIEW_LOADING_TEXT[view]):
         if view == "模型配置":

@@ -85,6 +85,8 @@ class AgentPreviewApi:
         }
         return {
             "task_id": f"fixture-{revision}", "record_id": "fixture-1", "revision": revision,
+            "workspace_kind": "", "content_version_id": f"fixture-{revision}",
+            "import_synced": True, "content_hash": "0" * 64,
             "operation": "generate" if revision == 1 else "refine",
             "feedback": "增加一个边界样例" if revision == 2 else "",
             "base_task_id": "fixture-1" if revision == 2 else None,

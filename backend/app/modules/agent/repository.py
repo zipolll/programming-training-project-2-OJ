@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from backend.app.core.database import Database
+from backend.app.modules.agent.content import content_hash
 from backend.app.modules.agent.models import (
     AgentConfigUpdate,
     AgentEvent,
@@ -88,6 +89,8 @@ class AgentRepository:
         feedback: str = "",
         generated: GeneratedProblem | None = None,
         queued: bool = True,
+        workspace_kind: str = "",
+        input_draft: GeneratedProblem | None = None,
     ) -> AgentTask:
         now = utc_now()
         async with self.database.connect() as connection:
@@ -97,8 +100,18 @@ class AgentRepository:
             )
             existing = await cursor.fetchone()
             if existing is not None:
-                if existing["user_id"] != user_id or existing["request_json"] != _json(
-                    request.model_dump(mode="json", exclude_unset=True)
+                if (
+                    existing["user_id"] != user_id
+                    or existing["request_json"]
+                    != _json(request.model_dump(mode="json", exclude_unset=True))
+                    or existing["workspace_kind"] != workspace_kind
+                    or (
+                        workspace_kind
+                        and (
+                            existing["input_draft_json"] != _json(input_draft)
+                            or existing["feedback"] != feedback
+                        )
+                    )
                 ):
                     raise RecordBusyError("请求标识已被其他内容使用，请重新提交。")
                 return self._task(dict(existing))
@@ -164,6 +177,11 @@ class AgentRepository:
                 await connection.execute(
                     "UPDATE agent_tasks SET content_version_id=task_id WHERE task_id=?",
                     (task_id,),
+                )
+            if workspace_kind:
+                await connection.execute(
+                    "UPDATE agent_tasks SET workspace_kind=?, input_draft_json=? WHERE task_id=?",
+                    (workspace_kind, _json(input_draft), task_id),
                 )
             await connection.commit()
         task = await self.get_task(task_id)
@@ -242,6 +260,13 @@ class AgentRepository:
             row = await cursor.fetchone()
             if row is None:
                 return
+            if row["workspace_kind"]:
+                await connection.execute(
+                    "UPDATE agent_tasks SET draft_json=?, updated_at=? WHERE task_id=?",
+                    (encoded, utc_now().isoformat(), task_id),
+                )
+                await connection.commit()
+                return
             cursor = await connection.execute(
                 "SELECT task_id, content_version_id, revision FROM agent_tasks "
                 "WHERE record_id=? AND task_id<>? "
@@ -263,8 +288,16 @@ class AgentRepository:
                 version_id = task_id
             await connection.execute(
                 "UPDATE agent_tasks SET draft_json=?, revision=?, content_version_id=?, "
-                "updated_at=? WHERE task_id=? AND status IN ('pending','running')",
-                (encoded, revision, version_id, utc_now().isoformat(), task_id),
+                "updated_at=?, current_content_hash=? WHERE task_id=? "
+                "AND status IN ('pending','running')",
+                (
+                    encoded,
+                    revision,
+                    version_id,
+                    utc_now().isoformat(),
+                    content_hash(generated),
+                    task_id,
+                ),
             )
             await connection.commit()
 
@@ -290,10 +323,13 @@ class AgentRepository:
             cursor = await connection.execute(
                 """
                 SELECT t.task_id,t.record_id,t.parent_task_id,t.base_task_id,t.operation,
-                    t.revision,t.content_version_id,t.validation_only,t.feedback,
+                    t.revision,t.content_version_id,t.validation_only,t.workspace_kind,t.feedback,
                     t.status,t.stage,t.progress,t.created_at,t.updated_at,
                     t.safe_error_message,t.error_code,t.cost,t.currency,t.total_tokens,
                     COALESCE(i.problem_id,vi.problem_id) AS imported_problem_id,
+                    (COALESCE(i.content_hash,vi.content_hash) IS NULL OR
+                     COALESCE(i.content_hash,vi.content_hash)=t.current_content_hash)
+                        AS import_synced,
                     COALESCE(json_extract(t.final_problem_json,'$.problem.title'),
                         json_extract(t.draft_json,'$.problem.title'),'') AS title,
                     COALESCE(json_extract(t.final_problem_json,'$.problem.difficulty'),
@@ -302,8 +338,11 @@ class AgentRepository:
                     COALESCE(json_extract(t.request_json,'$.prompt'),
                         json_extract(t.request_json,'$.additional_requirements'),'') AS prompt,
                     COALESCE(json_extract(t.request_json,'$.required_knowledge'),'[]') AS knowledge,
-                    (t.final_problem_json IS NOT NULL AND t.status='success') AS usable,
-                    (t.draft_json IS NOT NULL OR t.final_problem_json IS NOT NULL) AS has_content
+                    (t.workspace_kind='' AND t.final_problem_json IS NOT NULL
+                        AND t.status='success') AS usable,
+                    (t.workspace_kind='' AND
+                        (t.draft_json IS NOT NULL OR t.final_problem_json IS NOT NULL))
+                        AS has_content
                 FROM agent_tasks t LEFT JOIN agent_imports i ON i.task_id=t.task_id
                 LEFT JOIN agent_imports vi ON vi.task_id=t.content_version_id
                 WHERE t.user_id=? AND (? IS NULL OR t.record_id=?)
@@ -317,6 +356,8 @@ class AgentRepository:
     @staticmethod
     def summarize_record(versions: list[dict[str, Any]]) -> dict[str, Any]:
         latest = max(versions, key=lambda version: version["updated_at"])
+        if latest["workspace_kind"] and latest["status"] not in ("pending", "running"):
+            latest = next((v for v in versions if v["task_id"] == latest["base_task_id"]), latest)
         content = next((v for v in reversed(versions) if v["has_content"]), latest)
         usable = next((v for v in reversed(versions) if v["usable"]), None)
         imported = next((v for v in reversed(versions) if v["imported_problem_id"]), None)
@@ -326,7 +367,9 @@ class AgentRepository:
         root = next((v for v in versions if v["task_id"] == v["record_id"]), versions[0])
         return {
             "record_id": root["record_id"],
-            "latest_task_id": latest["task_id"],
+            "latest_task_id": latest["base_task_id"]
+            if latest["workspace_kind"]
+            else latest["task_id"],
             "active_task_id": active["task_id"] if active else None,
             "title": content["title"]
             or root["prompt"][:80]
@@ -339,7 +382,9 @@ class AgentRepository:
             if latest["stage"] == "awaiting_validation"
             else (
                 "imported"
-                if latest["status"] == "success" and latest["imported_problem_id"]
+                if latest["status"] == "success"
+                and latest["imported_problem_id"]
+                and latest["import_synced"]
                 else latest["status"]
             ),
             "stage": latest["stage"],
@@ -567,14 +612,43 @@ class AgentRepository:
             row = await cursor.fetchone()
         return str(row[0]) if row and row[0] is not None else None
 
-    async def record_import(self, task_id: str, problem_id: str) -> None:
+    async def record_import(
+        self, task_id: str, problem_id: str, fingerprint: str | None = None
+    ) -> None:
+        task = await self.get_task(task_id)
+        assert task is not None
+        fingerprint = fingerprint or content_hash(task.final_problem or task.draft)
         async with self.database.connect() as connection:
             await connection.execute(
-                "INSERT OR IGNORE INTO agent_imports(task_id,problem_id,imported_at) "
-                "SELECT COALESCE(content_version_id,task_id),?,? FROM agent_tasks WHERE task_id=?",
-                (problem_id, utc_now().isoformat(), task_id),
+                "INSERT INTO agent_imports(task_id,problem_id,imported_at,content_hash) "
+                "SELECT COALESCE(content_version_id,task_id),?,?,? FROM agent_tasks"
+                " WHERE task_id=? "
+                "ON CONFLICT(task_id) DO UPDATE SET problem_id=excluded.problem_id, "
+                "imported_at=excluded.imported_at,content_hash=excluded.content_hash",
+                (problem_id, utc_now().isoformat(), fingerprint, task_id),
+            )
+            await connection.execute(
+                "UPDATE agent_tasks SET current_content_hash=? WHERE (task_id=? OR"
+                " content_version_id=?) AND current_content_hash IS NULL",
+                (fingerprint, task_id, task.content_version_id or task_id),
             )
             await connection.commit()
+
+    async def import_synced(self, task_id: str) -> bool:
+        task = await self.get_task(task_id)
+        if task is None:
+            return False
+        async with self.database.connect() as connection:
+            cursor = await connection.execute(
+                "SELECT content_hash FROM agent_imports WHERE task_id IN (?,?) ORDER BY"
+                " task_id=? DESC LIMIT 1",
+                (task_id, task.content_version_id or task_id, task_id),
+            )
+            row = await cursor.fetchone()
+        return bool(
+            row is not None
+            and (row[0] is None or row[0] == content_hash(task.final_problem or task.draft))
+        )
 
     @staticmethod
     def _task(row: dict[str, Any]) -> AgentTask:
@@ -589,6 +663,10 @@ class AgentRepository:
             effective_requirements=json.loads(row.get("effective_requirements_json") or "{}"),
             revision=row["revision"],
             content_version_id=row.get("content_version_id"),
+            workspace_kind=row.get("workspace_kind", ""),
+            input_draft=GeneratedProblem.model_validate_json(row["input_draft_json"])
+            if row.get("input_draft_json")
+            else None,
             validation_only=bool(row.get("validation_only")),
             execution_queued_at=datetime.fromisoformat(row["execution_queued_at"])
             if row.get("execution_queued_at")

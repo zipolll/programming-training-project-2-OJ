@@ -15,7 +15,8 @@ from frontend.components.pagination import pagination_values, render_pagination
 from frontend.components.ui import badges, empty_state, list_count, section_header
 from frontend.data_access import invalidate_problem_cache, load_problem_summaries
 from frontend.models import DIFFICULTY_LEVELS, PROBLEM_TYPES
-from frontend.navigation import restore_widget, save_widgets, update_route
+from frontend.navigation import restore_widget, save_widgets
+from frontend.pages import agent_draft
 
 STATUS = {
     "pending": "排队中",
@@ -92,7 +93,7 @@ def task_status(task: dict) -> str:
 def open_task(task_id: str, *, edit: bool = False) -> None:
     st.session_state["agent_ai_open"] = False
     st.session_state.pop("agent_import_dialog", None)
-    update_route(
+    agent_draft.navigate(
         agent_active_view="任务详情",
         agent_task_id=task_id,
         agent_workspace_mode="编辑" if edit else "预览",
@@ -293,12 +294,6 @@ def authoring_form(api: ApiClient) -> None:
             _post(api, "/agent/tasks", payload)
 
 
-def _reuse(task: dict) -> None:
-    st.session_state["agent_new_draft"] = deepcopy(task["request"])
-    st.session_state["agent_composer_id"] = str(uuid4())
-    update_route(agent_active_view="新建出题")
-
-
 def record_list(api: ApiClient) -> None:
     columns = st.columns([3, 1, 1])
     for key in ("agent_history_search", "agent_history_status", "agent_history_difficulty"):
@@ -457,14 +452,15 @@ def preview(generated: dict, report: dict | None = None) -> None:
 
 
 def editor(api: ApiClient, task: dict, busy: bool) -> None:
-    candidate = deepcopy(task.get("final_problem") or task.get("draft"))
+    state = agent_draft.working(task)
+    candidate = deepcopy(state["content"])
     if not candidate:
         empty_state("生成题目后即可编辑。")
         return
-    prefix = f"agent_editor_{task['task_id']}"
-    with st.form(prefix):
+    prefix = f"agent_editor_{task['task_id']}_{state['epoch']}"
+    with st.container(key=prefix):
         problem = candidate["problem"]
-        st.caption("内容变化时保存为待验证的新版本；验证只更新当前版本，不会修改题目内容。")
+        st.caption("验证只检查当前草稿；保存覆盖当前版本，另存保留原版本。")
         statement, categories, solution = st.tabs(["题面与样例", "分类与限制", "解法与测试"])
         with statement:
             for label, name in [
@@ -520,7 +516,7 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
             for label, name in [("样例", "samples"), ("测试点", "testcases")]:
                 st.markdown(f"**{label}**")
                 problem[name] = st.data_editor(
-                    problem.get(name, []),
+                    state["seed"]["problem"].get(name, []),
                     num_rows="dynamic",
                     key=f"{prefix}_{name}",
                     column_config={
@@ -550,7 +546,7 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
             )
             st.caption("错误解法用于检查测试点能否识别常见错误；可选，最多 5 个。")
             wrong = st.data_editor(
-                [{"code": c} for c in candidate.get("wrong_solutions", [])] or [{"code": ""}],
+                [{"code": c} for c in state["seed"].get("wrong_solutions", [])] or [{"code": ""}],
                 num_rows="dynamic",
                 key=f"{prefix}_wrong",
                 hide_index=True,
@@ -558,22 +554,8 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
                 width="stretch",
             )
             candidate["wrong_solutions"] = [v["code"] for v in wrong if v.get("code")]
-        cancel, left, right = st.columns([2, 1, 1])
-        cancelled = cancel.form_submit_button("取消编辑")
-        saved = left.form_submit_button("保存新版本", disabled=busy)
-        validated = right.form_submit_button("验证并保存", type="primary", disabled=busy)
-    if cancelled:
-        for key in list(st.session_state):
-            if key.startswith(prefix):
-                del st.session_state[key]
-        open_task(task["task_id"])
-        st.rerun()
-    if saved or validated:
-        _post(
-            api,
-            f"/agent/tasks/{task['task_id']}/versions",
-            {"generated": candidate, "validate": validated},
-        )
+
+    state["content"] = candidate
 
 
 def _close_import() -> None:
@@ -582,14 +564,18 @@ def _close_import() -> None:
 
 @st.dialog("审阅并导入题目", width="small", on_dismiss=_close_import)
 def _import_controls(api: ApiClient, task: dict, record: dict) -> None:
-    if task.get("imported_problem_id"):
-        st.success(f"此版本已导入为 {task['imported_problem_id']}。继续修改会创建新版本。")
+    if task.get("imported_problem_id") and task.get("import_synced", True):
+        st.success(f"此版本已同步到题库题目 {task['imported_problem_id']}。")
         return
     if not task.get("final_problem") or task_status(task) != "success":
         return
     tid = task["task_id"]
     target = record.get("imported_problem_id")
-    choices = ["另存为新题", "更新原题"] if target else ["导入新题"]
+    choices = (
+        (["更新原题"] if task.get("imported_problem_id") else ["另存为新题", "更新原题"])
+        if target
+        else ["导入新题"]
+    )
     mode = (
         st.radio("保存方式", choices, key=f"agent_import_mode_{tid}", horizontal=True)
         if target
@@ -622,7 +608,7 @@ def _import_controls(api: ApiClient, task: dict, record: dict) -> None:
         except Exception as exc:
             show_error(exc)
             if updating:
-                st.caption("如果原题已删除，请切换为“另存为新题”。")
+                st.caption("如果原题已删除，请先另存为新版本，再导入为新题。")
         else:
             invalidate_problem_cache()
             st.session_state["agent_notice"] = f"已导入题目 {result['problem_id']}。"
@@ -642,83 +628,48 @@ def _chat_message(role: str, text: str) -> None:
 
 
 def _conversation(api: ApiClient, task: dict, record: dict) -> None:
-    generated = task.get("final_problem") or task.get("draft")
-    heading, close = st.columns([3, 1], vertical_alignment="center")
-    heading.markdown("**AI 修改**" if generated else "**调整要求并重试**")
-    with close, st.container(horizontal=True, horizontal_alignment="right"):
-        st.button("收起", key="agent_close_ai", on_click=_set_value, args=("agent_ai_open", False))
-    if generated:
-        st.caption(f"基于版本 {task['revision']} 修改")
-    else:
-        st.caption("尚未生成题目。调整下方要求后重新生成，原执行记录会保留。")
+    state = agent_draft.working(task)
     busy = bool(record["active_task_id"])
-    tid = task["task_id"]
-    failed = task["status"] in ("error", "cancelled")
-    with st.expander(
-        "出题要求",
-        expanded=not generated or bool(st.session_state.get("agent_adjust_requirements")),
-    ):
-        request = requirement_inputs(api, f"agent_requirements_{tid}", task["request"])
-        st.session_state[f"agent_request_snapshot_{tid}"] = request
-        if failed and st.button(
-            "按修改后的要求重试", type="primary", disabled=busy, key=f"agent_adjust_retry_{tid}"
-        ):
-            _post(api, f"/agent/tasks/{tid}/retry", {"request": request})
-    if not generated:
+    st.markdown("**与 AI 讨论修改**")
+    if not state["content"]:
+        st.caption("尚未生成题目，可在上方重试。调整要求后重新生成，原执行记录会保留。")
+        if st.session_state.get("agent_adjust_requirements"):
+            request = requirement_inputs(
+                api, f"agent_requirements_{task['task_id']}", task["request"]
+            )
+            if st.button("按修改后的要求重试", type="primary", disabled=busy):
+                _post(api, f"/agent/tasks/{task['task_id']}/retry", {"request": request})
         return
-    with st.container(height=300, border=False, key="oj_agent_conversation"):
+    with st.container(height=280, border=False, key="oj_agent_conversation"):
         _chat_message("user", record["prompt"] or "按指定设置出题")
-        for version in record.get("attempts", record["versions"]):
-            if version["feedback"]:
-                _chat_message("user", version["feedback"])
+        for attempt in record.get("attempts", record["versions"]):
+            if attempt.get("workspace_kind") == "check":
+                continue
+            if attempt["feedback"]:
+                _chat_message("user", attempt["feedback"])
             _chat_message(
                 "assistant",
-                f"{('版本 ' + str(version['revision'])) if version['revision'] else '本次执行'}："
-                f"{OPERATIONS[version['operation']]}，"
-                f"{STATUS[task_status(version)]}",
+                "修改结果已返回页面草稿，尚未保存。"
+                if attempt.get("workspace_kind") == "refine" and attempt["status"] == "success"
+                else f"{OPERATIONS[attempt['operation']]} · {STATUS[task_status(attempt)]}",
             )
     feedback = st.text_area(
-        "继续修改",
-        key=f"agent_feedback_{tid}",
+        "修改意见",
+        key=f"agent_feedback_{task['task_id']}",
         height=100,
-        placeholder="输入修改意见",
+        placeholder="例如：保留题意，增加重复值的边界样例",
         disabled=busy,
     )
-    st.caption("已指定的固定条件仍优先于修改意见。")
-    if st.button(
-        "发送修改要求",
-        type="primary",
-        key=f"agent_refine_{tid}",
-        width="stretch",
-        disabled=busy or not (task.get("draft") or task.get("final_problem")),
-    ):
-        if not feedback.strip():
-            st.error("请填写修改意见。")
-        else:
-            _post(api, f"/agent/tasks/{tid}/refine", {"feedback": feedback, "request": request})
+    st.caption("AI 将基于页面当前内容修改，包括尚未保存的手工改动。")
+    with st.container(horizontal=True, horizontal_alignment="right"):
+        if st.button(
+            "发送", key="agent_send_feedback", disabled=busy or not feedback.strip(), type="primary"
+        ):
+            agent_draft.request(api, task, state, "refine", feedback.strip())
 
 
 def _show_ai(adjust: bool = False) -> None:
-    st.session_state["agent_ai_open"] = True
     st.session_state["agent_adjust_requirements"] = adjust
-    update_route(agent_workspace_mode="预览")
-
-
-def _viewport(**kwargs):
-    component = st.components.v2.component(
-        "oj_agent_viewport",
-        html='<span aria-hidden="true"></span>',
-        css=":host {display:none}",
-        js="""
-        export default function({setStateValue}) {
-            const query = window.matchMedia('(max-width: 1000px)');
-            const update = () => setStateValue('compact', query.matches);
-            update(); query.addEventListener('change', update);
-            return () => query.removeEventListener('change', update);
-        }
-        """,
-    )
-    return component(**kwargs)
 
 
 def _task_heading(task: dict, record: dict, editing: bool) -> None:
@@ -730,7 +681,9 @@ def _task_heading(task: dict, record: dict, editing: bool) -> None:
         st.html(f'<h3 class="oj-agent-title" title="{escape(title)}">{escape(title)}</h3>')
         state = (
             "imported"
-            if task.get("imported_problem_id") and task_status(task) == "success"
+            if task.get("imported_problem_id")
+            and task.get("import_synced", True)
+            and task_status(task) == "success"
             else task_status(task)
         )
         tone = {"imported": "cyan", "success": "green", "error": "red"}.get(state, "gray")
@@ -739,8 +692,7 @@ def _task_heading(task: dict, record: dict, editing: bool) -> None:
     versions.setdefault(task["task_id"], task)
     st.session_state.agent_version_selection = task["task_id"]
     with controls, st.container(key="oj_agent_version_tools"):
-        version_col, more = st.columns([3, 1], gap="small", vertical_alignment="bottom")
-        version_col.selectbox(
+        st.selectbox(
             "查看版本",
             list(versions),
             format_func=lambda x: (
@@ -750,11 +702,9 @@ def _task_heading(task: dict, record: dict, editing: bool) -> None:
             ),
             key="agent_version_selection",
             on_change=_select_version,
-            disabled=editing,
+            disabled=False,
             label_visibility="collapsed",
         )
-        with more.popover("更多", disabled=editing, width="stretch"):
-            st.button("沿用要求出新题", on_click=_reuse, args=(task,))
 
 
 def _requirement_summary(task: dict, record: dict) -> None:
@@ -783,18 +733,28 @@ def task_monitor(api: ApiClient) -> None:
         return
     try:
         task = api.get(f"/agent/tasks/{tid}")["data"]
+        canonical = task.get("content_version_id")
+        if canonical and canonical != tid and not task.get("workspace_kind"):
+            open_task(canonical)
+            st.rerun()
         record = api.get(f"/agent/records/{task['record_id']}")["data"]
     except Exception as exc:
         show_error(exc)
         st.button("重新加载任务")
         return
+    state = agent_draft.working(task)
+    agent_draft.receive_job(api, task, state, record)
+    if st.session_state.get("agent_pending_navigation"):
+        agent_draft.navigation_dialog()
     if notice := st.session_state.pop("agent_notice", None):
         st.success(notice)
+    if error := st.session_state.pop("agent_job_error", None):
+        st.error(error)
     st.button(
         "返回出题记录",
         icon=":material/arrow_back:",
         key="agent_back_history",
-        on_click=update_route,
+        on_click=agent_draft.navigate,
         kwargs={"agent_active_view": "出题记录"},
     )
     generated = task.get("final_problem") or task.get("draft")
@@ -861,84 +821,65 @@ def task_monitor(api: ApiClient) -> None:
                             args=(record["usable_task_id"],),
                         )
                 st.caption("重试使用当前模型配置，会新增执行记录并单独计费。")
-    compact = bool(_viewport(key="agent_viewport", on_compact_change=lambda: None).compact)
-    ai_open = bool(st.session_state.get("agent_ai_open")) and not editing
+    generated = state["content"]
     with st.container(key="oj_agent_workspace"):
-        if generated and not editing:
-            with st.container(key="oj_agent_toolbar"):
-                actions, primary = st.columns([3, 2], vertical_alignment="center")
-                with actions, st.container(horizontal=True, vertical_alignment="center"):
-                    st.markdown("**题目**")
-                    st.button("AI 修改", on_click=_show_ai, disabled=busy or ai_open)
+        with st.container(key="oj_agent_toolbar"):
+            actions, publication = st.columns([3, 2], vertical_alignment="center")
+            with actions, st.container(horizontal=True, vertical_alignment="center"):
+                st.markdown("**编辑题目**" if editing else "**题目**")
+                if generated:
                     st.button(
-                        "手动编辑",
+                        "返回展示" if editing else "修改",
                         on_click=open_task,
                         args=(tid,),
-                        kwargs={"edit": True},
-                        disabled=busy or not generated,
+                        kwargs={"edit": not editing},
+                        disabled=busy,
                     )
-                with primary, st.container(horizontal=True, horizontal_alignment="right"):
-                    if task_status(task) == "draft":
-                        if st.button("验证题目", type="primary", disabled=busy):
-                            _post(api, f"/agent/tasks/{tid}/validate")
-                    elif task.get("imported_problem_id"):
-                        from urllib.parse import urlencode
+            with publication, st.container(horizontal=True, horizontal_alignment="right"):
+                if task.get("imported_problem_id") and task.get("import_synced", True):
+                    from urllib.parse import urlencode
 
-                        st.link_button(
-                            "查看已导入题目",
-                            "/problems?" + urlencode({"problem": task["imported_problem_id"]}),
-                        )
-                    elif (
-                        task.get("final_problem")
-                        and task_status(task) == "success"
-                        and st.button("导入题目", type="primary", disabled=busy)
+                    st.link_button(
+                        "查看题库题目",
+                        "/problems?" + urlencode({"problem": task["imported_problem_id"]}),
+                    )
+                elif task.get("final_problem") and task_status(task) == "success":
+                    if st.button(
+                        "更新题库题目" if task.get("imported_problem_id") else "导入题目",
+                        disabled=busy or agent_draft.dirty(state),
                     ):
                         st.session_state["agent_import_dialog"] = tid
-
-        elif editing:
-            st.markdown("**编辑题目**")
-        elif not ai_open:
-            st.markdown("**题目**")
-
+        if task.get("imported_problem_id") and not task.get("import_synced", True):
+            st.caption("此版本有未同步修改，题库中的原题尚未改变。")
         if st.session_state.get("agent_import_dialog") == tid:
             _import_controls(api, task, record)
-
-        def content() -> None:
-            with st.container(key="oj_agent_document"):
-                if editing:
+        with st.container(key="oj_agent_document"):
+            if generated:
+                if editing and not busy:
                     editor(api, task, busy)
-                elif generated:
-                    preview(generated, task.get("validation_report"))
                 else:
-                    message = (
-                        "正在生成题目，完成后将在这里显示。"
-                        if active
-                        else "本次任务尚未生成题目，可在上方重试或调整要求。"
-                        if task["status"] in ("error", "cancelled")
-                        else "题目生成后将显示在这里。"
-                    )
-                    st.html(f'<p class="oj-agent-empty">{escape(message)}</p>')
-
-        if ai_open and not generated:
-            with st.container(key="oj_agent_retry_panel"):
-                _conversation(api, task, record)
-        elif ai_open and compact:
-            st.button(
-                "返回题目",
-                icon=":material/arrow_back:",
-                on_click=_set_value,
-                args=("agent_ai_open", False),
-            )
-            with st.container(key="oj_agent_ai_panel"):
-                _conversation(api, task, record)
-        elif ai_open:
-            document, conversation = st.columns([2, 1], gap="large")
-            with document:
-                content()
-            with conversation, st.container(key="oj_agent_ai_panel"):
-                _conversation(api, task, record)
-        else:
-            content()
+                    report = task.get("validation_report") if not agent_draft.dirty(state) else None
+                    preview(state["content"], report)
+                if agent_draft.dirty(state):
+                    st.caption("当前有未保存的修改。")
+                if editing:
+                    with st.container(
+                        horizontal=True, horizontal_alignment="right", key="oj_agent_editor_actions"
+                    ):
+                        if st.button("验证", disabled=busy):
+                            agent_draft.request(api, task, state, "quick-validate")
+                        if st.button("保存", type="primary", disabled=busy):
+                            agent_draft.request(api, task, state, "save-content")
+                        if st.button("另存为新版本", disabled=busy):
+                            agent_draft.request(api, task, state, "versions")
+                agent_draft.validation_result(state)
+                agent_draft.browser_guard(state)
+            else:
+                st.caption(
+                    "正在生成题目。" if active else "本次任务尚未生成题目，可在上方重试或调整要求。"
+                )
+        with st.container(key="oj_agent_ai_bottom"):
+            _conversation(api, task, record)
         with st.container(key="oj_agent_task_information"), st.expander("任务信息"):
             st.markdown("**执行历史**")
             for version in record.get("attempts", record["versions"]):
