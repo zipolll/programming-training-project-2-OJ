@@ -158,7 +158,7 @@ SQLite 会保存最终结果、总分、编译/运行输出、耗时、内存和
 
 ## 评测日志与访问审计
 
-`PUT /api/problems/{problem_id}/log_visibility` 仅供管理员配置 `public_cases`，请求体省略该字段时取 False。`GET /api/submissions/{submission_id}/log` 根据该设置返回当前版本的日志：False 时，本人仅获得 `score` 和 `counts`（不返回 `details`），其他普通用户返回 403；True 时，所有已登录用户可查看明细和总分；管理员始终可查看完整日志。他人公开日志不包含可能携带代码片段的错误摘要。公开日志不改变 Step 2/3 Submission 详情、用户代码与编译信息的访问权限。
+`PUT /api/problems/{problem_id}/log_visibility` 仅供管理员配置 `public_cases`，请求体省略该字段时取 False；`GET /api/problems/{problem_id}/log_visibility` 供管理员查询当前公开状态（未设置过的题目返回 False）。`GET /api/submissions/{submission_id}/log` 根据该设置返回当前版本的日志：False 时，本人仅获得 `score` 和 `counts`（不返回 `details`），其他普通用户返回 403；True 时，所有已登录用户可查看明细和总分；管理员始终可查看完整日志。他人公开日志不包含可能携带代码片段的错误摘要。公开日志不改变 Step 2/3 Submission 详情、用户代码与编译信息的访问权限。
 
 独立的 `audit_logs` 表以结构化字段记录操作者、动作、目标、成功状态、HTTP 状态、必要变更摘要和时间。当前审计覆盖日志查看（包括已登录用户被拒绝的 403）、角色/封禁变更、管理员重评、题目删除、AI 配置修改和 AI 题目导入。管理员可通过 `GET /api/logs/access/` 查询课程规定的日志访问记录，也可通过分页接口 `GET /api/logs/audit/` 按用户、动作和成功状态查询全部已记录事件。审计摘要不保存密码、密码哈希、Session/Cookie、完整用户代码、请求体或模型密钥；普通运行日志不能替代该审计表。
 

@@ -55,6 +55,23 @@ async def set_log_visibility(
     )
 
 
+@router.get("/{problem_id}/log_visibility", response_model=ApiResponse)
+async def get_log_visibility(
+    problem_id: str,
+    request: Request,
+    current_user: Annotated[User, Depends(require_admin)],
+) -> ApiResponse:
+    del current_user
+    try:
+        await request.app.state.problem_service.get_problem(problem_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid problem id") from exc
+    except ProblemNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="problem not found") from exc
+    public = await EvaluationLogRepository(request.app.state.database).is_public(problem_id)
+    return ApiResponse(data={"problem_id": problem_id, "public_cases": public})
+
+
 async def get_problem_service(request: Request) -> ProblemService:
     return request.app.state.problem_service
 

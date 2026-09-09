@@ -123,18 +123,29 @@ def test_visibility_defaults_validation_permissions_and_persistence(context):
         "score": 10, "counts": 10,
     }
     assert client.put("/api/problems/P1/log_visibility", json={}).status_code == 403
+    assert client.get("/api/problems/P1/log_visibility").status_code == 403
     login(client)
+    assert client.get("/api/problems/P1/log_visibility").json()["data"] == {
+        "problem_id": "P1", "public_cases": False,
+    }
     for value in ("true", 1, None):
         assert client.put(
             "/api/problems/P1/log_visibility", json={"public_cases": value},
         ).status_code == 400
     assert client.put("/api/problems/missing/log_visibility", json={}).status_code == 404
+    assert client.get("/api/problems/missing/log_visibility").status_code == 404
     client.put("/api/problems/P1/log_visibility", json={"public_cases": True})
+    assert client.get("/api/problems/P1/log_visibility").json()["data"] == {
+        "problem_id": "P1", "public_cases": True,
+    }
     with TestClient(create_app(settings)) as restarted:
         login(restarted, "alice")
         assert "details" in restarted.get(f"/api/submissions/{sid}/log").json()["data"]
     cleared = client.put("/api/problems/P1/log_visibility", json={}).json()["data"]
     assert cleared["public_cases"] is False
+    assert client.get("/api/problems/P1/log_visibility").json()["data"] == {
+        "problem_id": "P1", "public_cases": False,
+    }
 
 
 def test_deleted_problem_rolls_back_counts_without_reviving_old_submissions(context):

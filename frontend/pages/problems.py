@@ -204,6 +204,39 @@ def _render_problem_submission_tools(
                 empty_state("你还没有提交过这道题。", icon="📭")
 
 
+def _render_log_visibility(api: ApiClient, problem: dict[str, Any]) -> None:
+    """Admin-only switch for the problem's public_cases log setting."""
+    problem_id = str(problem["id"])
+    try:
+        current = bool(
+            api.get(f"/problems/{problem_id}/log_visibility")["data"]["public_cases"]
+        )
+    except Exception as exc:
+        show_error(exc)
+        return
+    with section_card("日志公开设置", key=f"visibility_{problem_id}", icon="🔓"):
+        target = st.toggle(
+            "向所有已登录用户公开测试点明细",
+            value=current,
+            key=f"visibility_toggle_{problem_id}",
+            help="关闭后，普通用户（含提交者本人）只能查看日志的总得分与总分。",
+        )
+        if target != current:
+            try:
+                api.put(
+                    f"/problems/{problem_id}/log_visibility",
+                    json={"public_cases": target},
+                )
+            except Exception as exc:
+                show_error(exc)
+            else:
+                current = target
+                st.success("测试点明细已公开。" if target else "测试点明细已转为不公开。")
+        badges([
+            ("当前状态 · 已公开", "orange") if current else ("当前状态 · 未公开", "green"),
+        ])
+
+
 def render_problem_detail(
     api: ApiClient,
     problem_id: str,
@@ -353,6 +386,8 @@ def render_problem_detail(
             if problem.get("hint"):
                 with st.expander("查看提示"):
                     st.markdown(problem["hint"])
+    if role == "admin":
+        _render_log_visibility(api, problem)
 
 
 def render_problem_list(api: ApiClient, user: dict[str, Any]) -> None:

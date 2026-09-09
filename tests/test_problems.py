@@ -437,5 +437,5 @@ def test_problem_survives_application_restart(
 def test_problem_route_handlers_are_async() -> None:
     endpoints = [route.endpoint for route in problems_router.routes if hasattr(route, "endpoint")]
 
-    assert len(endpoints) == 6
+    assert len(endpoints) == 7
     assert all(inspect.iscoroutinefunction(endpoint) for endpoint in endpoints)
