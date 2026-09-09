@@ -664,9 +664,11 @@ def test_ui_unsaved_navigation_guard_and_import_dialog(agent_client):
     task = _new_success(client)
     app = _ui(client, task["task_id"]).run()
     assert not app.exception
-    assert any(t.label == "修改意见" for t in app.text_area)
+    # The display page keeps the problem and task information; the dialog appears when editing.
+    assert not any(t.label == "修改意见" for t in app.text_area)
     assert not any(b.label in ("AI 修改", "手动编辑") for b in app.button)
     next(b for b in app.button if b.label == "修改").click().run()
+    assert any(t.label == "修改意见" for t in app.text_area)
     prefix = f"agent_editor_{task['task_id']}_0"
     app.text_input(key=f"{prefix}_title").set_value("不保存这个标题").run()
     next(b for b in app.button if b.label == "返回出题记录").click().run()
@@ -681,6 +683,30 @@ def test_ui_unsaved_navigation_guard_and_import_dialog(agent_client):
     app.checkbox(key=f"agent_confirm_{task['task_id']}").check().run()
     next(b for b in app.button if b.label == "确认导入").click().run()
     assert not app.exception and app.get("link_button")
+
+
+def test_ui_failed_task_retries_with_adjusted_requirements_in_workspace(agent_client):
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    transport = client.app.state.agent_model_client.transport
+    client.app.state.agent_model_client.transport = httpx.MockTransport(
+        lambda request: httpx.Response(503)
+    )
+    created = client.post("/api/agent/tasks", json={"prompt": "出一道排序题"}).json()["data"]
+    assert wait_terminal(client, created["task_id"])["status"] == "error"
+    client.app.state.agent_model_client.transport = transport
+    app = _ui(client, created["task_id"]).run()
+    assert not app.exception
+    assert not any(b.label == "按修改后的要求重试" for b in app.button)
+    next(b for b in app.button if b.label == "修改要求后重试").click().run()
+    prefix = f"agent_requirements_{created['task_id']}"
+    app.text_area(key=f"{prefix}_prompt").set_value("出一道二分查找题").run()
+    next(b for b in app.button if b.label == "按修改后的要求重试").click().run()
+    assert not app.exception
+    retry_id = app.query_params["agent_task_id"][0]
+    retried = wait_terminal(client, retry_id)
+    assert retried["status"] == "success" and retry_id != created["task_id"]
+    assert retried["request"]["prompt"] == "出一道二分查找题"
 
 
 def test_requested_difficulty_and_knowledge_are_kept_as_problem_metadata() -> None:
@@ -1309,9 +1335,17 @@ def test_editor_routes_are_owner_isolated(agent_client):
     client.post("/api/auth/logout")
     client.post("/api/users/register", json={"username": "editor-other", "password": "secret123"})
     client.post("/api/auth/login", json={"username": "editor-other", "password": "secret123"})
-    assert client.post(path + "/quick-validate", json={
-        "generated": base["final_problem"], "request_id": "foreign-check"
-    }).status_code == 404
-    assert client.post(path + "/save-content", json={
-        "generated": base["final_problem"], "expected_hash": base["content_hash"]
-    }).status_code == 404
+    assert (
+        client.post(
+            path + "/quick-validate",
+            json={"generated": base["final_problem"], "request_id": "foreign-check"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            path + "/save-content",
+            json={"generated": base["final_problem"], "expected_hash": base["content_hash"]},
+        ).status_code
+        == 404
+    )

@@ -617,29 +617,21 @@ def _import_controls(api: ApiClient, task: dict, record: dict) -> None:
 
 
 def _chat_message(role: str, text: str) -> None:
-    """Keep message identity and readable previews independent of user Markdown."""
-    with st.chat_message(role):
-        if role == "user" and (len(text) > 180 or text.count("\n") > 3):
-            st.html(f'<div class="oj-agent-message-preview">{escape(text[:180])}…</div>')
-            with st.expander("展开完整消息"):
-                st.text(text)
-        else:
-            st.text(text)
+    """One chat row: AI bubbles sit left, user bubbles sit right like a chat app."""
+    body = escape(text)
+    if role == "user" and (len(text) > 180 or text.count("\n") > 3):
+        body = f'<span class="oj-chat-clamp" title="{escape(text)}">{body}…</span>'
+    st.html(
+        '<div class="oj-chat-row '
+        f'oj-chat-{role}"><span class="oj-chat-avatar">'
+        f"{'AI' if role == 'assistant' else '我'}</span>"
+        f'<div class="oj-chat-bubble">{body}</div></div>'
+    )
 
 
-def _conversation(api: ApiClient, task: dict, record: dict) -> None:
+def _conversation(api: ApiClient, task: dict, record: dict, busy: bool) -> None:
     state = agent_draft.working(task)
-    busy = bool(record["active_task_id"])
     st.markdown("**与 AI 讨论修改**")
-    if not state["content"]:
-        st.caption("尚未生成题目，可在上方重试。调整要求后重新生成，原执行记录会保留。")
-        if st.session_state.get("agent_adjust_requirements"):
-            request = requirement_inputs(
-                api, f"agent_requirements_{task['task_id']}", task["request"]
-            )
-            if st.button("按修改后的要求重试", type="primary", disabled=busy):
-                _post(api, f"/agent/tasks/{task['task_id']}/retry", {"request": request})
-        return
     with st.container(height=280, border=False, key="oj_agent_conversation"):
         _chat_message("user", record["prompt"] or "按指定设置出题")
         for attempt in record.get("attempts", record["versions"]):
@@ -862,24 +854,32 @@ def task_monitor(api: ApiClient) -> None:
                     preview(state["content"], report)
                 if agent_draft.dirty(state):
                     st.caption("当前有未保存的修改。")
-                if editing:
-                    with st.container(
-                        horizontal=True, horizontal_alignment="right", key="oj_agent_editor_actions"
-                    ):
-                        if st.button("验证", disabled=busy):
-                            agent_draft.request(api, task, state, "quick-validate")
-                        if st.button("保存", type="primary", disabled=busy):
-                            agent_draft.request(api, task, state, "save-content")
-                        if st.button("另存为新版本", disabled=busy):
-                            agent_draft.request(api, task, state, "versions")
-                agent_draft.validation_result(state)
-                agent_draft.browser_guard(state)
             else:
                 st.caption(
                     "正在生成题目。" if active else "本次任务尚未生成题目，可在上方重试或调整要求。"
                 )
+                if st.session_state.get("agent_adjust_requirements") and not active:
+                    with st.container(key="oj_agent_retry_panel"):
+                        request = requirement_inputs(
+                            api, f"agent_requirements_{tid}", task["request"]
+                        )
+                        if st.button("按修改后的要求重试", type="primary", disabled=busy):
+                            _post(api, f"/agent/tasks/{tid}/retry", {"request": request})
+            agent_draft.browser_guard(state)
+    if editing and generated:
         with st.container(key="oj_agent_ai_bottom"):
-            _conversation(api, task, record)
+            _conversation(api, task, record, busy)
+            with st.container(
+                horizontal=True, horizontal_alignment="right", key="oj_agent_editor_actions"
+            ):
+                if st.button("验证", disabled=busy):
+                    agent_draft.request(api, task, state, "quick-validate")
+                if st.button("保存", type="primary", disabled=busy):
+                    agent_draft.request(api, task, state, "save-content")
+                if st.button("另存为新版本", disabled=busy):
+                    agent_draft.request(api, task, state, "versions")
+            agent_draft.validation_result(state)
+    if not editing:
         with st.container(key="oj_agent_task_information"), st.expander("任务信息"):
             st.markdown("**执行历史**")
             for version in record.get("attempts", record["versions"]):

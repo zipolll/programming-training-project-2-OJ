@@ -56,9 +56,6 @@ GLOBAL_CSS = r"""
 .st-key-oj_agent_conversation {
   border: 1px solid var(--oj-line); background: var(--oj-surface); border-radius: 10px;
 }
-.st-key-agent_view_content [data-testid="stChatMessage"] {
-  background: transparent; padding: .65rem .5rem;
-}
 [class*="_conditions"] button { border-radius: 18px; }
 .st-key-agent_nav_selection { margin-bottom: .35rem; }
 .st-key-oj_agent_navigation .st-key-agent_nav_selection button {
@@ -131,55 +128,37 @@ GLOBAL_CSS = r"""
 .st-key-oj_agent_document [data-testid="stMarkdownContainer"] {
   max-width: 80ch;
 }
-.st-key-oj_agent_workspace .st-key-oj_agent_ai_panel {
-  border-left: 1px solid var(--oj-line); padding-left: 24px; min-width: 0;
-}
-.st-key-oj_agent_ai_panel .st-key-oj_agent_conversation { border: 0; }
-.st-key-oj_agent_ai_panel [data-testid="stChatMessageAvatarAssistant"] {
-  background: var(--oj-tint); color: var(--oj-primary);
-}
-.st-key-oj_agent_conversation [data-testid="stChatMessage"] {
-  align-items: flex-start; gap: 10px; padding: 8px 0;
-}
-.st-key-oj_agent_conversation
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-  flex-direction: row-reverse;
-}
-.st-key-oj_agent_conversation [data-testid="stChatMessageAvatarUser"] {
-  background: #e8eefb; color: #365c9c;
-}
-.st-key-oj_agent_conversation [data-testid="stChatMessageContent"] {
-  flex: 0 1 auto; min-width: 0; max-width: calc(100% - 42px);
-  padding: 10px 12px; border-radius: 10px; background: var(--oj-tint);
-}
-.st-key-oj_agent_conversation
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])
-[data-testid="stChatMessageContent"] {
-  background: #f0f4fc;
-}
-.st-key-oj_agent_conversation .oj-agent-message-preview {
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
-  overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.7;
-}
-.st-key-oj_agent_conversation [data-testid="stExpander"] details {
-  background: transparent; border: 0;
+.st-key-oj_agent_ai_bottom {
+  background: var(--oj-surface); border: 1px solid var(--oj-line);
+  border-radius: 12px; padding: 24px; gap: 16px;
 }
 .st-key-oj_agent_retry_panel { min-width: 0; }
-.st-key-oj_agent_ai_bottom {
-  border-top: 1px solid var(--oj-line); padding-top: 24px; margin-top: 8px;
+.st-key-oj_agent_conversation [data-testid="stVerticalBlock"] { gap: .7rem; }
+.oj-chat-row { display: flex; align-items: flex-start; gap: 10px; }
+.oj-chat-row.oj-chat-user { flex-direction: row-reverse; }
+.oj-chat-avatar {
+  flex: 0 0 32px; width: 32px; height: 32px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; user-select: none;
 }
-.st-key-oj_agent_ai_bottom .st-key-oj_agent_conversation { border: 0; }
-.st-key-oj_agent_ai_bottom [data-testid="stChatMessageAvatarAssistant"] {
-  background: var(--oj-tint); color: var(--oj-primary);
+.oj-chat-assistant .oj-chat-avatar { background: var(--oj-tint); color: var(--oj-primary); }
+.oj-chat-user .oj-chat-avatar { background: #e8eefb; color: #365c9c; }
+.oj-chat-bubble {
+  max-width: min(72ch, 78%); padding: 10px 14px; border-radius: 12px;
+  background: #edf6f8; color: var(--oj-ink); white-space: pre-wrap;
+  overflow-wrap: anywhere; line-height: 1.7; font-size: 15px; text-align: left;
+}
+.oj-chat-user .oj-chat-bubble { background: #e9f0fc; }
+.oj-chat-clamp {
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
 .st-key-oj_agent_editor_actions button { min-height: 44px; }
 .st-key-agent_unload_guard { display:none; }
-.st-key-oj_agent_ai_bottom [data-testid="stChatMessageContent"] {
-  max-width: min(80ch, calc(100% - 42px));
-}
 @media (max-width: 700px) {
   .st-key-oj_agent_composer { padding: 1rem; }
   .st-key-oj_agent_overview, .st-key-oj_agent_workspace { padding: 16px; }
+  .st-key-oj_agent_ai_bottom { padding: 16px; }
+  .oj-chat-bubble { max-width: 88%; }
   .st-key-oj_agent_overview .oj-agent-title { font-size: 22px; }
   .st-key-oj_agent_document [role="tablist"] { gap: .65rem; }
   .st-key-oj_agent_document [role="tab"] { padding-inline: .1rem; }
@@ -192,7 +171,6 @@ GLOBAL_CSS = r"""
   .st-key-agent_settings_link button { padding-inline: .5rem; }
 }
 @media (max-width: 1000px) {
-  .st-key-oj_agent_workspace .st-key-oj_agent_ai_panel { border-left: 0; padding-left: 0; }
   .st-key-oj_agent_task_heading > [data-testid="stHorizontalBlock"] {
     flex-direction: column; gap: 16px;
   }
