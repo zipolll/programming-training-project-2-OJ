@@ -63,6 +63,9 @@ def navigation_dialog():
 
 def _stay_on_page():
     st.session_state.pop("agent_pending_navigation", None)
+    # Dialog clicks only rerun the dialog body; force the app rerun that
+    # re-evaluates the dialog's open condition and closes it.
+    st.rerun()
 
 
 def _discard_and_leave():
@@ -70,6 +73,7 @@ def _discard_and_leave():
     st.session_state.pop(f"agent_working_{tid}", None)
     route = st.session_state.pop("agent_pending_navigation")
     update_route(**route)
+    st.rerun()
 
 
 def browser_guard(state):

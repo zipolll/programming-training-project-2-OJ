@@ -596,6 +596,9 @@ def _import_task(api: ApiClient, tid: str, updating: bool, problem_id: str) -> N
         invalidate_problem_cache()
         st.session_state["agent_notice"] = f"已导入题目 {result['problem_id']}。"
         _close_import()
+        # Widget clicks inside st.dialog only rerun the dialog body; the full
+        # rerun is what closes it and renders the page-level notice.
+        st.rerun()
 
 
 @st.dialog("审阅并导入题目", width="small", on_dismiss=_close_import)

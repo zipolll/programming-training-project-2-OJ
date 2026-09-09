@@ -40,6 +40,15 @@ with sync_playwright() as p:
         expect(page.get_by_role("button", name="AI 修改", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="手动编辑", exact=True)).to_have_count(0)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        # Confirming the import dialog closes it and shows the page-level notice.
+        page.get_by_role("button", name="导入题目", exact=True).click()
+        import_dialog = page.get_by_role("dialog")
+        expect(import_dialog).to_be_visible()
+        import_dialog.get_by_label("我已审阅题面、参考解法和验证结果").check(force=True)
+        import_dialog.get_by_role("button", name="确认导入", exact=True).click()
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        expect(page.get_by_text("已导入题目", exact=False)).to_be_visible()
+        page.screenshot(path=str(OUTPUT / f"imported-{size}.png"), full_page=True)
         page.screenshot(path=str(OUTPUT / f"display-{size}.png"), full_page=True)
         # Editor page: the conversation card sits below the workspace, actions under the input.
         workspace.get_by_role("button", name="修改", exact=True).click()
@@ -103,6 +112,8 @@ with sync_playwright() as p:
         page.locator(".st-key-agent_back_history button").click()
         expect(page.get_by_role("dialog")).to_be_visible()
         page.get_by_role("button", name="留在当前页面", exact=True).click()
+        # Dialog buttons must trigger the full rerun that closes the dialog.
+        expect(page.get_by_role("dialog")).to_have_count(0)
         expect(page.get_by_role("textbox", name="题面", exact=True)).to_have_value(
             "未保存的手工修改"
         )
