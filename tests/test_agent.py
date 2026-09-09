@@ -1349,3 +1349,36 @@ def test_editor_routes_are_owner_isolated(agent_client):
         ).status_code
         == 404
     )
+
+
+def test_ui_validation_clears_stale_result_while_new_check_runs(agent_client, monkeypatch):
+    client, _, _ = agent_client
+    task = _new_success(client)
+    app = _ui(client, task["task_id"])
+    app.query_params["agent_workspace_mode"] = "编辑"
+    app.run()
+    assert not app.exception
+    next(b for b in app.button if b.label == "验证").click().run()
+    state = app.session_state[f"agent_working_{task['task_id']}"]
+    if state.get("job"):
+        wait_terminal(client, state["job"])
+    app.run()
+    assert len([s for s in app.success if "参考程序已通过" in s.value]) == 1
+    tools = client.app.state.agent_task_manager.tools
+    original = tools.execute_reference_solution
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(1.5)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(tools, "execute_reference_solution", slow)
+    next(i for i in app.text_input if i.label == "标题").set_value("手动标题").run()
+    next(b for b in app.button if b.label == "验证").click().run()
+    assert not app.exception
+    assert not any("参考程序已通过" in s.value for s in app.success)
+    assert any("正在验证当前草稿" in c.value for c in app.caption)
+    state = app.session_state[f"agent_working_{task['task_id']}"]
+    wait_terminal(client, state["job"])
+    app.run()
+    assert len([s for s in app.success if "参考程序已通过" in s.value]) == 1
+    monkeypatch.setattr(tools, "execute_reference_solution", original)

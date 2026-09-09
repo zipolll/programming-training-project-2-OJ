@@ -59,6 +59,12 @@ with sync_playwright() as p:
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
         actions.screenshot(path=str(OUTPUT / f"actions-{size}.png"))
         ai.screenshot(path=str(OUTPUT / f"conversation-{size}.png"))
+        # A running check shows one hint instead of stacking progress blocks.
+        actions.get_by_role("button", name="验证", exact=True).click()
+        expect(
+            page.get_by_text("正在验证当前草稿，完成后结果会显示在这里。", exact=True)
+        ).to_be_visible()
+        expect(page.get_by_role("progressbar")).to_have_count(0)
         # Draft survives tab switches and the unsaved-changes navigation guard.
         statement_field.fill("未保存的手工修改")
         statement_field.press("Tab")

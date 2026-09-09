@@ -772,6 +772,17 @@ def task_monitor(api: ApiClient) -> None:
     editing = mode == "编辑"
     active = record["active_task_id"]
     busy = bool(active)
+    active_attempt = (
+        next(
+            (v for v in record.get("attempts", record["versions"]) if v["task_id"] == active),
+            None,
+        )
+        if active
+        else None
+    )
+    # Editor checks finish quickly; keep polling them for auto-refresh without
+    # showing another progress block on top of the workspace.
+    check_running = bool(active_attempt and active_attempt.get("workspace_kind") == "check")
     with st.container(key="oj_agent_overview"):
         _task_heading(task, record, editing)
         _requirement_summary(task, record)
@@ -801,6 +812,8 @@ def task_monitor(api: ApiClient) -> None:
                     st.rerun()
                 if current["status"] not in ("pending", "running"):
                     st.rerun()
+            if check_running:
+                return
             state = task_status(current)
             st.progress(
                 current["progress"] / 100,

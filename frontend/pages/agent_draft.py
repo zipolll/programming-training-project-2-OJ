@@ -118,6 +118,9 @@ def request(api, task, state, action, feedback=""):
         state["job"] = result["task_id"]
         state["seed"] = deepcopy(state["content"])
         state["epoch"] += 1
+        if action == "quick-validate":
+            # A new check replaces the previous result instead of stacking on it.
+            state.pop("check", None)
     else:
         state["saved"] = deepcopy(state["content"])
         st.session_state["agent_notice"] = (
@@ -163,8 +166,10 @@ def receive_job(api, task, state, record):
             epoch=state["epoch"] + 1,
         )
     if job["status"] in ("pending", "running"):
+        state["job_kind"] = job.get("workspace_kind")
         return
     state.pop("job", None)
+    state.pop("job_kind", None)
     state.setdefault("received_jobs", []).append(job_id)
     if job.get("workspace_kind") == "check" and job.get("validation_report"):
         state["check"] = job
@@ -180,6 +185,9 @@ def receive_job(api, task, state, record):
 
 
 def validation_result(state):
+    if state.get("job") and state.get("job_kind") == "check":
+        st.caption("正在验证当前草稿，完成后结果会显示在这里。")
+        return
     check = state.get("check")
     if not check:
         return
@@ -206,15 +214,11 @@ def validation_result(state):
                 table_key = f"agent_check_{check['task_id']}_{evidence_index}"
                 with data_table(labels, widths, key=table_key):
                     for item in cases:
-                        with table_row(
-                            labels, widths, key=f"{table_key}_{item['id']}"
-                        ) as row:
+                        with table_row(labels, widths, key=f"{table_key}_{item['id']}") as row:
                             with row[0]:
                                 cell_text(item["id"], emphasis=True)
                             with row[1]:
-                                badges(
-                                    [(status_text(item["result"]), status_tone(item["result"]))]
-                                )
+                                badges([(status_text(item["result"]), status_tone(item["result"]))])
                             with row[2]:
                                 cell_text(
                                     "—" if item["result"] == "CE" else f"{item['time']:.3f} 秒"

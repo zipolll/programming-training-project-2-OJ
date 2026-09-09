@@ -299,28 +299,19 @@ def test_problem_catalog_filters_public_summary_fields() -> None:
         },
     ]
 
-    assert [item["id"] for item in filter_problem_summaries(problems, "前缀和")] == [
-        "P1001"
-    ]
-    assert [item["id"] for item in filter_problem_summaries(problems, "校赛")] == [
+    assert [item["id"] for item in filter_problem_summaries(problems, "前缀和")] == ["P1001"]
+    assert [item["id"] for item in filter_problem_summaries(problems, "校赛")] == ["P1002"]
+    assert [item["id"] for item in filter_problem_summaries(problems, difficulty="困难")] == [
         "P1002"
     ]
-    assert [
-        item["id"] for item in filter_problem_summaries(problems, difficulty="困难")
-    ] == ["P1002"]
-    assert [item["id"] for item in filter_problem_summaries(problems, "算法设计")] == [
-        "P1001"
-    ]
+    assert [item["id"] for item in filter_problem_summaries(problems, "算法设计")] == ["P1001"]
 
 
 def test_catalogue_options_support_empty_standard_and_custom_values() -> None:
     assert DIFFICULTY_LEVELS == ["入门", "简单", "中等", "困难"]
     assert catalogue_selection("", DIFFICULTY_LEVELS, allow_empty=True) == ""
     assert catalogue_selection("中等", DIFFICULTY_LEVELS, allow_empty=True) == "中等"
-    assert (
-        catalogue_selection("竞赛级", DIFFICULTY_LEVELS, allow_empty=True)
-        == OTHER_OPTION
-    )
+    assert catalogue_selection("竞赛级", DIFFICULTY_LEVELS, allow_empty=True) == OTHER_OPTION
     assert resolve_catalogue_option(OTHER_OPTION, " 竞赛级 ") == "竞赛级"
     assert resolve_catalogue_option("简单", "ignored") == "简单"
 
@@ -351,9 +342,7 @@ def test_problem_detail_actions_follow_edit_and_delete_permissions() -> None:
     assert "我确认永久删除该题目。" in content
     statement_position = content.index('st.container(border=False, key="problem_statement")')
     metadata_position = content.index('st.container(key="oj_problem_facts")')
-    description_position = content.index(
-        'section_header("题目描述", icon="📖")', metadata_position
-    )
+    description_position = content.index('section_header("题目描述", icon="📖")', metadata_position)
     assert metadata_position < statement_position < description_position
 
 
@@ -390,9 +379,7 @@ def test_language_registration_requires_core_execution_fields() -> None:
         "请输入源文件扩展名。",
         "请输入运行命令。",
     ]
-    assert validate_language(
-        {"name": "java", "file_ext": ".java", "run_cmd": "java {src}"}
-    ) == []
+    assert validate_language({"name": "java", "file_ext": ".java", "run_cmd": "java {src}"}) == []
 
 
 @pytest.mark.parametrize(
@@ -570,9 +557,7 @@ def test_reference_resources_are_requested_once_across_page_navigation() -> None
     ("total", "page_size", "expected"),
     [(0, 10, 1), (1, 10, 1), (10, 10, 1), (11, 10, 2), (101, 50, 3)],
 )
-def test_compact_pagination_page_count(
-    total: int, page_size: int, expected: int
-) -> None:
+def test_compact_pagination_page_count(total: int, page_size: int, expected: int) -> None:
     assert page_count(total, page_size) == expected
 
 
@@ -596,18 +581,15 @@ def test_private_page_data_uses_short_per_session_cache() -> None:
 def test_paginated_pages_share_compact_table_footer() -> None:
     frontend = Path(__file__).parents[1] / "frontend"
     auth_source = (frontend / "pages" / "auth.py").read_text(encoding="utf-8")
-    submission_source = (frontend / "pages" / "submissions.py").read_text(
-        encoding="utf-8"
-    )
+    submission_source = (frontend / "pages" / "submissions.py").read_text(encoding="utf-8")
 
     assert 'render_pagination("user_admin", total=total)' in auth_source
     assert 'render_pagination("submission_list", total=' in submission_source
     assert 'number_input("页码"' not in auth_source + submission_source
-    pagination_source = (frontend / "components" / "pagination.py").read_text(
-        encoding="utf-8"
-    )
+    pagination_source = (frontend / "components" / "pagination.py").read_text(encoding="utf-8")
     assert '"首页"' in pagination_source
-    assert '">",' in pagination_source
+    assert '"<",' in pagination_source and "上一页" in pagination_source
+    assert '">",' in pagination_source and "下一页" in pagination_source
     assert '"末页"' in pagination_source
     assert "selectbox" not in pagination_source
     assert "use_container_width=True" not in pagination_source
@@ -624,9 +606,7 @@ def test_paginated_pages_share_compact_table_footer() -> None:
     ("value", "expected"),
     [("0.24868", "0.25"), (0, "0.00"), ("invalid", "0.00")],
 )
-def test_agent_cost_is_displayed_with_two_decimal_places(
-    value: Any, expected: str
-) -> None:
+def test_agent_cost_is_displayed_with_two_decimal_places(value: Any, expected: str) -> None:
     assert agent_page.format_cost(value) == expected
 
 
@@ -723,9 +703,7 @@ def test_bridge_ticket_restores_cookie_then_authoritative_identity(
     state: dict[str, Any] = {"auth_bridge_nonce": "nonce-a"}
     monkeypatch.setattr(
         "frontend.session.mount_auth_bridge",
-        lambda **_: SimpleNamespace(
-            ticket_result={"ticket": "one-use-ticket", "nonce": "nonce-a"}
-        ),
+        lambda **_: SimpleNamespace(ticket_result={"ticket": "one-use-ticket", "nonce": "nonce-a"}),
     )
     client = ApiClient("http://test/api", transport=httpx.MockTransport(handler))
 
@@ -841,9 +819,10 @@ def test_navigation_is_grouped_with_unique_paths_and_icons() -> None:
 def test_audit_page_formats_actions_targets_and_safe_changes() -> None:
     assert audit_action_text("view_logs") == "查看测试点日志"
     assert audit_action_text("future_action") == "future_action"
-    assert audit_target_text(
-        {"target_type": "submission", "target_id": "12", "problem_id": "P1"}
-    ) == "提交 12 · 题目 P1"
+    assert (
+        audit_target_text({"target_type": "submission", "target_id": "12", "problem_id": "P1"})
+        == "提交 12 · 题目 P1"
+    )
     assert audit_changes_text({"before": "user", "after": "admin"}) == (
         '{"before": "user", "after": "admin"}'
     )
@@ -1018,7 +997,8 @@ def test_admin_profile_uses_admin_identity_header(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(auth_page, "info_card", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(auth_page, "section_header", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        auth_page.st, "columns",
+        auth_page.st,
+        "columns",
         lambda spec, **_kwargs: [
             Column() for _ in range(spec if isinstance(spec, int) else len(spec))
         ],
@@ -1036,8 +1016,8 @@ def test_problem_management_contains_only_creation_modes() -> None:
     assert 'section_header("新建普通题目", icon="📝")' in source
     assert 'label_visibility="collapsed"' in source
     assert 'section_header("操作", icon="🎛️")' not in source
-    assert 'f"编辑 · {problem[\'title\']}"' in source
-    assert 'f"删除 · {problem[\'title\']}"' in source
+    assert "f\"编辑 · {problem['title']}\"" in source
+    assert "f\"删除 · {problem['title']}\"" in source
     assert "我确认永久删除该题目。" in source
 
 

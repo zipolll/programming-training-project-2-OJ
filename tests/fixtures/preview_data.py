@@ -42,22 +42,43 @@ class AgentPreviewApi:
             return {"data": {"configured": True, "has_api_key": True, "model_name": "test-model"}}
         if path.endswith("/events"):
             return {"data": []}
+        if path == "/agent/tasks/fixture-check":
+            check = self.task(1)
+            check.update(
+                task_id="fixture-check",
+                operation="validate",
+                workspace_kind="check",
+                status="running",
+                stage="execute_reference",
+                progress=70,
+                validation_report=None,
+                input_draft=check["final_problem"],
+                feedback="",
+            )
+            return {"data": check}
         if path.startswith("/agent/tasks/fixture-"):
             return {"data": self.task(int(path.rsplit("-", 1)[1]))}
         if path.startswith("/agent/records"):
             versions = []
             for revision in (1, 2):
                 task = self.task(revision)
-                version = {k: v for k, v in task.items() if k not in (
-                    "request", "draft", "final_problem", "validation_report"
-                )}
+                version = {
+                    k: v
+                    for k, v in task.items()
+                    if k not in ("request", "draft", "final_problem", "validation_report")
+                }
                 generated = task.get("final_problem") or task.get("draft")
-                version.update(title=generated["problem"]["title"] if generated else "",
-                               difficulty="中等", prompt=task["request"].get("prompt", ""),
-                               knowledge='["字符串", "哈希表"]',
-                               has_content=bool(generated), usable=bool(task.get("final_problem")))
+                version.update(
+                    title=generated["problem"]["title"] if generated else "",
+                    difficulty="中等",
+                    prompt=task["request"].get("prompt", ""),
+                    knowledge='["字符串", "哈希表"]',
+                    has_content=bool(generated),
+                    usable=bool(task.get("final_problem")),
+                )
                 versions.append(version)
             from backend.app.modules.agent.repository import AgentRepository
+
             record = AgentRepository.summarize_record(versions)
             if path == "/agent/records":
                 return {"data": {"items": [record], "total": 1, "difficulties": ["中等"]}}
@@ -68,25 +89,35 @@ class AgentPreviewApi:
 
     def task(self, revision):
         status = (
-            "cancelled" if self.status == "cancelled" else
-            "success" if revision == 1 or self.status == "long_title" else self.status
+            "cancelled"
+            if self.status == "cancelled"
+            else "success"
+            if revision == 1 or self.status == "long_title"
+            else self.status
         )
         generated = {
             "problem": {
                 **PROBLEM,
                 "title": ("超长题目标题与维度广播校正" * 12 + " <b>纯文本</b>")
-                if self.status == "long_title" else PROBLEM["title"],
-            }, "solution_explanation": "使用字典累计词频后排序。",
+                if self.status == "long_title"
+                else PROBLEM["title"],
+            },
+            "solution_explanation": "使用字典累计词频后排序。",
             "complexity_analysis": "O(n log n)",
             "reference_solution": (
                 "from collections import Counter\nprint(Counter(input().split()))"
             ),
-            "reference_solution_language": "python", "wrong_solutions": [],
+            "reference_solution_language": "python",
+            "wrong_solutions": [],
         }
         return {
-            "task_id": f"fixture-{revision}", "record_id": "fixture-1", "revision": revision,
-            "workspace_kind": "", "content_version_id": f"fixture-{revision}",
-            "import_synced": True, "content_hash": "0" * 64,
+            "task_id": f"fixture-{revision}",
+            "record_id": "fixture-1",
+            "revision": revision,
+            "workspace_kind": "",
+            "content_version_id": f"fixture-{revision}",
+            "import_synced": True,
+            "content_hash": "0" * 64,
             "operation": "generate" if revision == 1 else "refine",
             "feedback": "增加一个边界样例" if revision == 2 else "",
             "base_task_id": "fixture-1" if revision == 2 else None,
@@ -96,16 +127,24 @@ class AgentPreviewApi:
             "progress": 65 if status == "running" else 100,
             "created_at": f"2026-09-07T10:2{revision}:00+00:00",
             "updated_at": f"2026-09-07T10:2{revision}:00+00:00",
-            "input_tokens": 2800, "output_tokens": 1600, "total_tokens": 4400,
-            "cost": "0.012", "currency": "USD", "usage_estimated": True,
+            "input_tokens": 2800,
+            "output_tokens": 1600,
+            "total_tokens": 4400,
+            "cost": "0.012",
+            "currency": "USD",
+            "usage_estimated": True,
             "safe_error_message": "模型服务暂时不可用，请稍后重试。" if status == "error" else None,
             "imported_problem_id": None,
             "request": {
-                "prompt": self.long_prompt if self.status in ("cancelled", "long_title") else
-                "出一道校园热搜词统计题，考查哈希表和排序。", "difficulty": "中等",
-                "problem_type": "算法设计", "required_knowledge": ["字符串", "哈希表"],
+                "prompt": self.long_prompt
+                if self.status in ("cancelled", "long_title")
+                else "出一道校园热搜词统计题，考查哈希表和排序。",
+                "difficulty": "中等",
+                "problem_type": "算法设计",
+                "required_knowledge": ["字符串", "哈希表"],
             },
-            "final_problem": generated if status == "success" else None, "draft": None,
+            "final_problem": generated if status == "success" else None,
+            "draft": None,
             "validation_report": (
                 {"blocking_errors": [], "unresolved_risks": []} if status == "success" else None
             ),
@@ -113,6 +152,8 @@ class AgentPreviewApi:
 
     def post(self, path, json=None):
         st.session_state["fixture_saved"] = (path, json)
+        if path.endswith("/quick-validate"):
+            return {"data": {"task_id": "fixture-check"}}
         return {"data": {"task_id": "fixture-2", "problem_id": PROBLEM["id"]}}
 
 

@@ -61,30 +61,51 @@ def render_pagination(key: str, *, total: int, page_size: int = DEFAULT_PAGE_SIZ
         st.rerun()
 
     numbers = page_window(page, pages)
-    widths = [1.15, *([0.62] * len(numbers)), 0.62, 1.15, 1.65]
+    widths = [1.15, 0.62, *([0.62] * len(numbers)), 0.62, 1.15, 1.65]
     with st.container(key=f"{key}_pagination"):
         columns = st.columns(widths)
         cursor = 0
         columns[cursor].button(
-            "首页", key=f"{key}_first", disabled=page == 1,
-            on_click=_set_page, args=(key, 1),
+            "首页",
+            key=f"{key}_first",
+            disabled=page == 1,
+            on_click=_set_page,
+            args=(key, 1),
+        )
+        cursor += 1
+        columns[cursor].button(
+            "<",
+            key=f"{key}_previous",
+            disabled=page == 1,
+            help="上一页",
+            on_click=_set_page,
+            args=(key, page - 1),
         )
         cursor += 1
         for number in numbers:
             columns[cursor].button(
-                str(number), key=f"{key}_page_{number}",
+                str(number),
+                key=f"{key}_page_{number}",
                 type="primary" if number == page else "secondary",
-                on_click=_set_page, args=(key, number),
+                on_click=_set_page,
+                args=(key, number),
             )
             cursor += 1
         columns[cursor].button(
-            ">", key=f"{key}_next", disabled=page >= pages, help="下一页",
-            on_click=_set_page, args=(key, page + 1),
+            ">",
+            key=f"{key}_next",
+            disabled=page >= pages,
+            help="下一页",
+            on_click=_set_page,
+            args=(key, page + 1),
         )
         cursor += 1
         columns[cursor].button(
-            "末页", key=f"{key}_last", disabled=page == pages,
-            on_click=_set_page, args=(key, pages),
+            "末页",
+            key=f"{key}_last",
+            disabled=page == pages,
+            on_click=_set_page,
+            args=(key, pages),
         )
         cursor += 1
         columns[cursor].markdown(

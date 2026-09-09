@@ -550,7 +550,7 @@ button:focus-visible, a:focus-visible, [role="radio"]:focus-visible,
 }
 [class*="st-key-bank_link_card_"] button p { overflow-wrap: anywhere; white-space: normal; }
 [class*="st-key-oj_bank_description_"] {
-  height: 3rem; min-height: 3rem;
+  height: auto; min-height: 1.5rem;
 }
 [class*="st-key-oj_bank_description_"] p {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
