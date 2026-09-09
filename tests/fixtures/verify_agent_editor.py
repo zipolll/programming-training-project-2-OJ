@@ -33,7 +33,10 @@ with sync_playwright() as p:
         page.screenshot(path=str(OUTPUT / f"display-{size}.png"), full_page=True)
         # Editor page: the conversation card sits below the workspace, actions under the input.
         workspace.get_by_role("button", name="修改", exact=True).click()
-        expect(page.get_by_role("textbox", name="题面", exact=True)).to_be_visible()
+        statement_field = page.get_by_role("textbox", name="题面", exact=True)
+        expect(statement_field).to_be_visible()
+        # The statement field grows with its content instead of clipping it.
+        assert statement_field.evaluate("(e) => e.scrollHeight <= e.clientHeight + 1")
         expect(info).to_have_count(0)
         ai = page.locator(".st-key-oj_agent_ai_bottom")
         expect(ai.get_by_role("textbox", name="修改意见", exact=True)).to_be_visible()
@@ -57,8 +60,8 @@ with sync_playwright() as p:
         actions.screenshot(path=str(OUTPUT / f"actions-{size}.png"))
         ai.screenshot(path=str(OUTPUT / f"conversation-{size}.png"))
         # Draft survives tab switches and the unsaved-changes navigation guard.
-        page.get_by_role("textbox", name="题面", exact=True).fill("未保存的手工修改")
-        page.get_by_role("textbox", name="题面", exact=True).press("Tab")
+        statement_field.fill("未保存的手工修改")
+        statement_field.press("Tab")
         page.get_by_role("tab", name="分类与限制", exact=True).click()
         page.get_by_role("tab", name="题面与样例", exact=True).click()
         editor_field = page.get_by_role("textbox", name="题面", exact=True)

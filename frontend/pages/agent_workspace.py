@@ -451,6 +451,14 @@ def preview(generated: dict, report: dict | None = None) -> None:
                 st.json(report, expanded=False)
 
 
+def _statement_height(text: str) -> int:
+    """Grow the statement field with its content so it never scrolls."""
+    lines = 0
+    for paragraph in str(text).split("\n"):
+        lines += max(1, -(-len(paragraph) // 30))
+    return max(130, lines * 25 + 44)
+
+
 def editor(api: ApiClient, task: dict, busy: bool) -> None:
     state = agent_draft.working(task)
     candidate = deepcopy(state["content"])
@@ -463,8 +471,14 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
         st.caption("验证只检查当前草稿；保存覆盖当前版本，另存保留原版本。")
         statement, categories, solution = st.tabs(["题面与样例", "分类与限制", "解法与测试"])
         with statement:
+            with st.container(key="oj_agent_statement_field"):
+                problem["description"] = st.text_area(
+                    "题面",
+                    value=problem.get("description", ""),
+                    key=f"{prefix}_description",
+                    height=_statement_height(problem.get("description", "")),
+                )
             for label, name in [
-                ("题面", "description"),
                 ("输入说明", "input_description"),
                 ("输出说明", "output_description"),
                 ("约束", "constraints"),
