@@ -37,6 +37,15 @@ with sync_playwright() as p:
         expect(statement_field).to_be_visible()
         # The statement field grows with its content instead of clipping it.
         assert statement_field.evaluate("(e) => e.scrollHeight <= e.clientHeight + 1")
+        # It must also hug the content instead of leaving large empty space.
+        long_statement = "\n".join(
+            f"第{index}段：验证题面输入框随内容自动伸展。" for index in range(1, 13)
+        )
+        statement_field.fill(long_statement)
+        statement_field.press("Tab")
+        expect(statement_field).to_have_value(long_statement)
+        page.wait_for_timeout(600)
+        assert statement_field.evaluate("(e) => Math.abs(e.scrollHeight - e.clientHeight) <= 2")
         expect(info).to_have_count(0)
         ai = page.locator(".st-key-oj_agent_ai_bottom")
         expect(ai.get_by_role("textbox", name="修改意见", exact=True)).to_be_visible()

@@ -153,7 +153,12 @@ GLOBAL_CSS = r"""
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
 .st-key-oj_agent_editor_actions button { min-height: 44px; }
-.st-key-oj_agent_statement_field textarea { field-sizing: content; }
+/* Size the statement field to its content; the widget's inline height is a fallback. */
+.st-key-oj_agent_statement_field textarea {
+  field-sizing: content;
+  height: auto !important;
+  min-height: 130px;
+}
 .st-key-agent_unload_guard { display:none; }
 @media (max-width: 700px) {
   .st-key-oj_agent_composer { padding: 1rem; }
