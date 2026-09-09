@@ -652,10 +652,14 @@ def _conversation(api: ApiClient, task: dict, record: dict, busy: bool) -> None:
         placeholder="例如：保留题意，增加重复值的边界样例",
         disabled=busy,
     )
-    st.caption("AI 将基于页面当前内容修改，包括尚未保存的手工改动。")
-    with st.container(horizontal=True, horizontal_alignment="right"):
+    footer, send = st.columns([4, 1], vertical_alignment="center")
+    footer.caption("AI 将基于页面当前内容修改，包括尚未保存的手工改动。")
+    with send, st.container(horizontal=True, horizontal_alignment="right"):
         if st.button(
-            "发送", key="agent_send_feedback", disabled=busy or not feedback.strip(), type="primary"
+            "发送",
+            key="agent_send_feedback",
+            disabled=busy or not feedback.strip(),
+            type="primary",
         ):
             agent_draft.request(api, task, state, "refine", feedback.strip())
 
