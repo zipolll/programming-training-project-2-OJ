@@ -35,3 +35,6 @@ judge-workspace/
 *.exe
 *.out
 node_modules/
+
+# Plugin runtime artifacts
+.video_agent/
