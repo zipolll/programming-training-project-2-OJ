@@ -91,6 +91,9 @@ class AuthoringRequest(StrictModel):
     background_preference: str = Field(default="", max_length=2000)
     testcase_count: int = Field(default=10, ge=1, le=100)
     additional_requirements: str = Field(default="", max_length=10000)
+    # Strong data: generated cases must be large enough that declared brute-force
+    # wrong solutions time out while the reference stays well inside the limit.
+    stress_testing: bool = False
     adapt_existing: bool = False
     existing_problem_id: str | None = Field(default=None, max_length=64)
 
@@ -126,6 +129,23 @@ class RetryRequest(StrictModel):
     request: AuthoringRequest | None = None
 
 
+class GeneratorCaseSpec(StrictModel):
+    """One invocation of the testcase generator with its own seed and knobs."""
+
+    label: str = Field(min_length=1, max_length=100)
+    seed: int = Field(ge=0, le=2_147_483_647)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class TestCaseGenerator(StrictModel):
+    """Python program that synthesizes large deterministic testcase inputs."""
+
+    language: Literal["python"] = "python"
+    source: str = Field(min_length=1, max_length=100_000)
+    notes: str = Field(default="", max_length=2000)
+    cases: list[GeneratorCaseSpec] = Field(min_length=1, max_length=60)
+
+
 class GeneratedProblem(StrictModel):
     problem: Problem
     solution_explanation: str = Field(min_length=1)
@@ -133,6 +153,9 @@ class GeneratedProblem(StrictModel):
     reference_solution_language: str = Field(default="python", pattern=r"^(python|cpp)$")
     reference_solution: str = Field(min_length=1, max_length=1_000_000)
     wrong_solutions: list[str] = Field(default_factory=list, max_length=5)
+    # Present only in fresh drafts: the backend executes it, appends materialized
+    # testcases, and clears the field before the draft is persisted.
+    testcase_generator: TestCaseGenerator | None = None
 
 
 class SaveVersionRequest(StrictModel):
@@ -166,6 +189,7 @@ class ValidationReport(StrictModel):
     distinguishes_bruteforce: bool = False
     wrong_solutions_run: int = 0
     wrong_solution_detections: dict[str, list[int]] = Field(default_factory=dict)
+    wrong_solution_tle_cases: dict[str, list[int]] = Field(default_factory=dict)
     blocking_errors: list[str] = Field(default_factory=list)
     unresolved_risks: list[str] = Field(default_factory=list)
     tool_evidence: list[dict[str, Any]] = Field(default_factory=list)

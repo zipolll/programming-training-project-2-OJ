@@ -66,6 +66,9 @@ class JudgeService:
                 results: list[TestcaseResult] = []
                 captured_stdout = ""
                 captured_stderr = ""
+                run_output_limit = (
+                    problem.output_limit_bytes or self.settings.judge_output_limit_bytes
+                )
                 for testcase_id, testcase in enumerate(problem.testcases, start=1):
                     result, stdout, stderr = await self._judge_testcase(
                         testcase_id,
@@ -83,6 +86,7 @@ class JudgeService:
                             if "memory_limit" in problem.model_fields_set
                             else language.memory_limit
                         ),
+                        run_output_limit,
                     )
                     results.append(result)
                     captured_stdout = self._bounded_join(captured_stdout, stdout)
@@ -120,6 +124,7 @@ class JudgeService:
         workspace: Path,
         time_limit: float,
         memory_limit: int,
+        output_limit: int | None = None,
     ) -> tuple[TestcaseResult, str, str]:
         try:
             outcome = await self.executor.execute(
@@ -128,6 +133,7 @@ class JudgeService:
                 stdin=testcase_input.encode("utf-8"),
                 time_limit=time_limit,
                 memory_limit_mb=memory_limit,
+                output_limit=output_limit,
             )
             stdout = decode_output(outcome.stdout)
             stderr = outcome.stderr.decode("utf-8", errors="replace")

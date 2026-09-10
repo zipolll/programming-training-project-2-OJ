@@ -99,7 +99,9 @@ async def list_problems(
 ) -> ApiResponse:
     del current_user
     problems = await problem_service.list_problems()
-    return ApiResponse(data=[problem.model_dump(mode="json") for problem in problems])
+    return ApiResponse(
+        data=[problem.model_dump(mode="json", exclude_none=True) for problem in problems]
+    )
 
 
 @router.post("/", response_model=ApiResponse)
@@ -174,4 +176,4 @@ async def get_problem(
         raise _invalid_problem_id() from exc
     except ProblemNotFoundError as exc:
         raise HTTPException(status_code=404, detail="problem not found") from exc
-    return ApiResponse(data=problem.model_dump(mode="json"))
+    return ApiResponse(data=problem.model_dump(mode="json", exclude_none=True))

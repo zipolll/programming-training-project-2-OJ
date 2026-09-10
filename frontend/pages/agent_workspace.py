@@ -65,11 +65,12 @@ LABELS = {
     "background_preference": "背景偏好",
     "additional_requirements": "补充要求",
     "existing_problem_id": "改编题目",
+    "stress_testing": "强数据（防暴力超时）",
 }
 
 ERRORS = {
-    "model_timeout": "模型响应超时，可以精简要求后重试。每次任务总时限为 4 分钟。",
-    "task_timeout": "已达到 4 分钟总时限，任务已停止；已有内容已保留，可调整要求后重试。",
+    "model_timeout": "模型响应超时，可以精简要求后重试。每次任务总时限为 8 分钟。",
+    "task_timeout": "已达到 8 分钟总时限，任务已停止；已有内容已保留，可调整要求后重试。",
     "model_connection_failed": "暂时无法连接模型服务，请检查连接后重试。",
     "model_unauthorized": "模型服务拒绝了当前密钥，请更新模型配置后重试。",
     "model_rate_limited": "模型服务请求过于频繁，请稍后重试。",
@@ -229,6 +230,14 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
                 key=f"{prefix}_{name}",
                 placeholder="AI 决定",
             )
+        _seed(f"{prefix}_stress_testing", bool(data.get("stress_testing")))
+        stress = st.checkbox(
+            "强数据（防暴力超时）",
+            key=f"{prefix}_stress_testing",
+            help="用程序化生成的大规模测试点区分算法复杂度：正确做法通过，明显更慢的暴力做法超时。",
+        )
+        if stress:
+            values["stress_testing"] = True
         _seed(f"{prefix}_adapt_existing", bool(data.get("adapt_existing")))
         adapt = st.checkbox("基于已有题目改编", key=f"{prefix}_adapt_existing")
         if adapt:
@@ -254,7 +263,7 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
         {
             key: value
             for key, value in values.items()
-            if value is not None and value != "" and value != []
+            if value is not None and value is not False and value != "" and value != []
         }
     )
     settings = [(key, value) for key, value in payload.items() if key in LABELS]
@@ -262,13 +271,26 @@ def requirement_inputs(api: ApiClient, prefix: str, initial: dict | None = None)
         st.caption("固定条件优先于文字要求；点击条件可清除。")
         with st.container(horizontal=True, key=f"{prefix}_conditions"):
             for name, value in settings:
-                label = "、".join(value) if isinstance(value, list) else str(value)
+                if isinstance(value, bool):
+                    label = "开启" if value else "关闭"
+                elif isinstance(value, list):
+                    label = "、".join(value)
+                else:
+                    label = str(value)
                 st.button(
                     f"{LABELS[name]}：{label[:40]}{'…' if len(label) > 40 else ''} ×",
                     key=f"{prefix}_clear_{name}",
                     help=label,
                     on_click=_clear_condition,
-                    args=(prefix, name, None if isinstance(value, (int, float)) else ""),
+                    args=(
+                        prefix,
+                        name,
+                        False
+                        if isinstance(value, bool)
+                        else None
+                        if isinstance(value, (int, float))
+                        else "",
+                    ),
                 )
     return payload
 
@@ -291,7 +313,10 @@ def authoring_form(api: ApiClient) -> None:
         payload = requirement_inputs(api, prefix, draft)
         st.session_state["agent_new_draft"] = payload
         footer, submit = st.columns([3, 1], vertical_alignment="center")
-        footer.caption("每次生成一道题，最多等待 4 分钟，可从出题记录查看结果。")
+        footer.caption(
+            "每次生成一道题，最多等待 8 分钟（强数据出题含大数据生成与评测），"
+            "可从出题记录查看结果。"
+        )
         submit.button(
             "开始出题",
             type="primary",
@@ -407,6 +432,29 @@ def record_list(api: ApiClient) -> None:
         refresh_active_records()
 
 
+PREVIEW_CASE_CHARS = 1200
+EDITOR_LARGE_CASE_CHARS = 4000
+
+
+def _clip_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n…（已截断，完整内容共 {len(text):,} 字符）"
+
+
+def _reference_case_times(report: dict | None) -> dict[int, float]:
+    if not report:
+        return {}
+    for evidence in report.get("tool_evidence", []):
+        if evidence.get("tool") == "validate_testcases":
+            return {
+                item["id"]: item.get("time") or 0.0
+                for item in evidence["result"].get("testcases", [])
+                if isinstance(item, dict)
+            }
+    return {}
+
+
 def preview(generated: dict, report: dict | None = None) -> None:
     problem = generated["problem"]
     badges(
@@ -442,11 +490,18 @@ def preview(generated: dict, report: dict | None = None) -> None:
         st.markdown(generated["complexity_analysis"])
         st.code(generated["reference_solution"], language=generated["reference_solution_language"])
     with data:
+        times = _reference_case_times(report)
         for index, case in enumerate(problem.get("testcases", []), 1):
-            st.caption(f"测试点 {index}")
+            meta = [
+                f"输入 {len(case['input']):,} 字符",
+                f"输出 {len(case['output']):,} 字符",
+            ]
+            if (elapsed := times.get(index)) is not None:
+                meta.append(f"参考程序 {elapsed:.3f} 秒")
+            st.caption(f"测试点 {index} · " + " · ".join(meta))
             left, right = st.columns(2)
-            left.code(case["input"], language=None)
-            right.code(case["output"], language=None)
+            left.code(_clip_text(case["input"], PREVIEW_CASE_CHARS), language=None)
+            right.code(_clip_text(case["output"], PREVIEW_CASE_CHARS), language=None)
     with validation:
         if not report:
             st.caption("此版本尚无验证结果。")
@@ -460,6 +515,38 @@ def preview(generated: dict, report: dict | None = None) -> None:
                 st.warning(risk)
             with st.expander("验证明细"):
                 st.json(report, expanded=False)
+
+
+def _editable_rows(rows: list) -> tuple[list[dict], dict[str, str]]:
+    """Collapse huge cells for the editor; unchanged cells restore on save."""
+    displayed: list[dict] = []
+    restore: dict[str, str] = {}
+    for index, item in enumerate(rows):
+        row = dict(item or {})
+        for field in ("input", "output"):
+            text = str(row.get(field) or "")
+            if len(text) > EDITOR_LARGE_CASE_CHARS:
+                token = f"__OJ_LARGE_CASE_{index}_{field}__"
+                collapsed = (
+                    text[:EDITOR_LARGE_CASE_CHARS]
+                    + f"\n{token}（完整数据已保留，保存时未修改的单元格自动还原）"
+                )
+                restore[collapsed] = text
+                row[field] = collapsed
+        displayed.append(row)
+    return displayed, restore
+
+
+def _restore_rows(rows: list, restore: dict[str, str]) -> list[dict]:
+    restored = []
+    for row in rows:
+        row = dict(row or {})
+        for field in ("input", "output"):
+            text = str(row.get(field) or "")
+            if text in restore:
+                row[field] = restore[text]
+        restored.append(row)
+    return restored
 
 
 def editor(api: ApiClient, task: dict, busy: bool) -> None:
@@ -533,8 +620,11 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
         with solution:
             for label, name in [("样例", "samples"), ("测试点", "testcases")]:
                 st.markdown(f"**{label}**")
-                problem[name] = st.data_editor(
-                    state["seed"]["problem"].get(name, []),
+                displayed, restore = _editable_rows(state["seed"]["problem"].get(name, []))
+                if restore:
+                    st.caption("超长测试数据已折叠显示开头部分；未修改的单元格保存时自动保留完整内容。")
+                edited = st.data_editor(
+                    displayed,
                     num_rows="dynamic",
                     key=f"{prefix}_{name}",
                     column_config={
@@ -544,6 +634,7 @@ def editor(api: ApiClient, task: dict, busy: bool) -> None:
                     hide_index=True,
                     width="stretch",
                 )
+                problem[name] = _restore_rows(edited, restore)
             for label, name in [
                 ("解法说明", "solution_explanation"),
                 ("复杂度分析", "complexity_analysis"),
@@ -735,11 +826,19 @@ def _requirement_summary(task: dict, record: dict) -> None:
     request = task["request"]
     text = record.get("prompt") or request.get("prompt") or ""
     if not text:
+
+        def describe(value):
+            if isinstance(value, bool):
+                return "开启" if value else "关闭"
+            if isinstance(value, list):
+                return "、".join(map(str, value))
+            return str(value)
+
         text = (
             "；".join(
-                f"{label}：{'、'.join(map(str, value)) if isinstance(value, list) else value}"
+                f"{label}：{describe(value)}"
                 for key, label in LABELS.items()
-                if (value := request.get(key)) not in (None, "", [])
+                if (value := request.get(key)) not in (None, "", [], False)
             )
             or "由 AI 决定出题要求"
         )

@@ -35,8 +35,10 @@ class JudgeExecutor:
         stdin: bytes,
         time_limit: float,
         memory_limit_mb: int,
+        output_limit: int | None = None,
     ) -> ProcessOutcome:
         """Execute an argument vector with bounded output, time, and memory."""
+        capture_limit = output_limit or self.output_limit
         started = time.perf_counter()
         try:
             process = await asyncio.create_subprocess_exec(
@@ -51,8 +53,8 @@ class JudgeExecutor:
         except (OSError, ValueError):
             return ProcessOutcome(TestcaseStatus.UNK, None, b"", b"", 0.0, 0.0)
 
-        stdout_task = asyncio.create_task(self._read_limited(process.stdout))
-        stderr_task = asyncio.create_task(self._read_limited(process.stderr))
+        stdout_task = asyncio.create_task(self._read_limited(process.stdout, capture_limit))
+        stderr_task = asyncio.create_task(self._read_limited(process.stderr, capture_limit))
         stdin_task = asyncio.create_task(self._write_stdin(process, stdin))
         wait_task = asyncio.create_task(process.wait())
         memory_task = asyncio.create_task(self._monitor_memory(process, memory_limit_mb))
@@ -105,14 +107,14 @@ class JudgeExecutor:
         )
 
     async def _read_limited(
-        self, stream: asyncio.StreamReader | None
+        self, stream: asyncio.StreamReader | None, output_limit: int
     ) -> tuple[bytes, bool]:
         if stream is None:
             return b"", False
         collected = bytearray()
         truncated = False
         while chunk := await stream.read(8192):
-            remaining = self.output_limit - len(collected)
+            remaining = output_limit - len(collected)
             if remaining > 0:
                 collected.extend(chunk[:remaining])
             if len(chunk) > remaining:

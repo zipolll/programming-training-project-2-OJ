@@ -51,6 +51,7 @@ def add_problem(
     *,
     time_limit: float = 1.0,
     memory_limit: int = 128,
+    output_limit_bytes: int | None = None,
 ) -> None:
     payload = {
         "id": problem_id,
@@ -64,6 +65,8 @@ def add_problem(
         "time_limit": time_limit,
         "memory_limit": memory_limit,
     }
+    if output_limit_bytes is not None:
+        payload["output_limit_bytes"] = output_limit_bytes
     assert client.post("/api/problems/", json=payload).status_code == 200
 
 
@@ -420,4 +423,33 @@ def test_dynamically_registered_c_uses_preinstalled_compiler(judge_context):
     )
     assert outcome.status is Status.AC
     assert outcome.score == 10
+    assert_clean(root)
+
+
+def test_problem_output_limit_overrides_capture_default(
+    judge_context: tuple[TestClient, FastAPI, Path],
+) -> None:
+    """A problem may raise the stdout capture ceiling above the 4 KiB default."""
+    client, application, root = judge_context
+    line = "x" * 100
+    count = 60  # 6120 bytes including newlines: over 4096, under 16384
+    expected = "".join(f"{line}\n" for _ in range(count))
+    code = f"for _ in range({count}):\n    print('{line}')\n"
+
+    add_problem(client, "limit_default", [{"input": "", "output": expected}])
+    capped = judge(
+        client, application, problem_id="limit_default", language="python", code=code
+    )
+    assert capped.status is Status.WA
+
+    add_problem(
+        client,
+        "limit_raised",
+        [{"input": "", "output": expected}],
+        output_limit_bytes=16384,
+    )
+    raised = judge(
+        client, application, problem_id="limit_raised", language="python", code=code
+    )
+    assert raised.status is Status.AC
     assert_clean(root)

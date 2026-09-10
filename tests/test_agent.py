@@ -344,10 +344,10 @@ def test_validation_claim_is_atomic_and_old_version_gets_fresh_execution_budget(
     original_validate = tools.build_validation_report
     calls = []
 
-    async def delayed_validate(generated):
+    async def delayed_validate(generated, **kwargs):
         calls.append(generated)
         await asyncio.sleep(0.5)
-        return await original_validate(generated)
+        return await original_validate(generated, **kwargs)
 
     monkeypatch.setattr(tools, "build_validation_report", delayed_validate)
     before = len(requests)
@@ -1048,7 +1048,7 @@ def test_deadline_includes_validation_preserves_draft_and_known_usage(agent_clie
     manager = client.app.state.agent_task_manager
     cancelled = []
 
-    async def slow_validation(generated):
+    async def slow_validation(generated, **kwargs):
         try:
             await asyncio.sleep(10)
         finally:
@@ -1472,3 +1472,300 @@ def test_ui_validation_clears_stale_result_while_new_check_runs(agent_client, mo
     app.run()
     assert len([s for s in app.success if "参考程序已通过" in s.value]) == 1
     monkeypatch.setattr(tools, "execute_reference_solution", original)
+
+
+# ---------------------------------------------------------------------------
+# Strong data: generator materialization, archetype detection, stress gate
+
+
+def _generator_problem() -> dict[str, Any]:
+    payload = generated_problem()
+    payload["problem"]["time_limit"] = 2.0
+    payload["testcase_generator"] = {
+        "language": "python",
+        "source": (
+            "def build_case(spec):\n"
+            "    import random\n"
+            "    rng = random.Random(spec['seed'])\n"
+            "    n = int(spec['params']['n'])\n"
+            "    nums = [str(rng.randint(1, 100)) for _ in range(n)]\n"
+            "    return str(n) + chr(10) + ' '.join(nums) + chr(10)\n"
+        ),
+        "notes": "",
+        "cases": [
+            {"label": "medium", "seed": 11, "params": {"n": 50}},
+            {"label": "max", "seed": 12, "params": {"n": 30000}},
+        ],
+    }
+    return payload
+
+
+def test_generated_problem_accepts_testcase_generator() -> None:
+    generated = GeneratedProblem.model_validate(_generator_problem())
+    assert generated.testcase_generator is not None
+    assert [case.label for case in generated.testcase_generator.cases] == ["medium", "max"]
+
+
+def test_authoring_request_accepts_stress_testing() -> None:
+    request = AuthoringRequest(prompt="强数据出题", stress_testing=True)
+    assert request.stress_testing is True
+
+
+def test_archetype_detection_matches_common_algorithm_tasks() -> None:
+    from backend.app.modules.agent.archetypes import detect_archetype
+
+    phrasings = {
+        "range_query": (
+            "以校运会每日入场人数统计为背景，多次日期区间查询回答总人数，考查前缀和。"
+        ),
+        "membership_bookkeeping": (
+            "图书馆预约入场，区分正常入场、重复入场和无预约，考查集合或字典。"
+        ),
+        "queue_simulation": (
+            "OJ 服务器用 asyncio 处理评测任务，最大并发数的空闲执行单元按到达顺序接收"
+            "任务，计算完成时间，用优先队列。"
+        ),
+        "interval_scan": (
+            "给出每个线程的开始时间和结束时间，左闭右开区间运行，"
+            "求最大并发线程数及最早出现的时刻。"
+        ),
+    }
+    for expected, prompt in phrasings.items():
+        assert detect_archetype(AuthoringRequest(prompt=prompt)) == expected
+    assert detect_archetype(AuthoringRequest(prompt="判断回文字符串")) is None
+
+
+def test_matching_request_gets_strength_profile(agent_client) -> None:
+    client, _, requests = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    tid = client.post(
+        "/api/agent/tasks",
+        json={
+            "prompt": (
+                "以校运会每日入场人数统计为背景，多次日期区间查询，"
+                "要求暴力做法超时，考查前缀和。"
+            )
+        },
+    ).json()["data"]["task_id"]
+    deadline = time.time() + 20
+    while not requests and time.time() < deadline:
+        time.sleep(0.1)
+    assert requests, "model request was never sent"
+    outgoing = json.loads(requests[0].content)
+    prompt = json.loads(outgoing["messages"][1]["content"])
+    assert prompt["data_strength_profile"]["archetype"] == "range_query"
+    assert prompt["data_strength_profile"]["guidance"]["suggested_constraints"]
+    assert any("data_strength_profile" in rule for rule in prompt["rules"])
+    client.post(f"/api/agent/tasks/{tid}/cancel")
+    wait_terminal(client, tid)
+
+
+def test_materialize_testcases_appends_generated_cases(agent_client) -> None:
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    generated = GeneratedProblem.model_validate(_generator_problem())
+
+    async def run():
+        return await tools.materialize_testcases(generated)
+
+    materialized, report = client.portal.call(run)
+    assert report is None
+    assert materialized.testcase_generator is None
+    assert len(materialized.problem.testcases) == 6
+    big = materialized.problem.testcases[-1]
+    assert big.input.startswith("30000\n") and len(big.input) >= 50_000
+    assert big.output == f"{sum(map(int, big.input.split()))}\n"
+    # Re-running an already materialized draft is a no-op.
+    async def again():
+        return await tools.materialize_testcases(materialized)
+
+    assert client.portal.call(again) == (materialized, None)
+
+
+def test_materialize_testcases_reports_generator_failure(agent_client) -> None:
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    payload = _generator_problem()
+    payload["testcase_generator"]["source"] = (
+        "def build_case(spec):\n    raise ValueError('boom-params')\n"
+    )
+    generated = GeneratedProblem.model_validate(payload)
+
+    async def run():
+        return await tools.materialize_testcases(generated)
+
+    materialized, report = client.portal.call(run)
+    assert report is not None and report.blocking_errors
+    assert any("boom-params" in error for error in report.blocking_errors)
+    assert materialized.testcase_generator is not None
+    assert len(materialized.problem.testcases) == 4
+
+
+def test_stress_gate_blocks_weak_data(agent_client) -> None:
+    client, _, _ = agent_client
+    tools = client.app.state.agent_task_manager.tools
+    generated = GeneratedProblem.model_validate(generated_problem())
+
+    async def run(stress: bool):
+        return await tools.build_validation_report(generated, stress_testing=stress)
+
+    report = client.portal.call(run, True)
+    assert any("strong data not achieved" in error for error in report.blocking_errors)
+    plain = client.portal.call(run, False)
+    assert not any("strong data not achieved" in error for error in plain.blocking_errors)
+
+
+def test_stress_task_materializes_strong_data_and_proves_tle(agent_client) -> None:
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    payload = _generator_problem()
+    payload["problem"]["time_limit"] = 1.5
+    payload["wrong_solutions"] = ["x = 0\nwhile True:\n    x += 1\n"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(payload)}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            },
+        )
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(handler)
+    tid = client.post(
+        "/api/agent/tasks", json={"prompt": "出题", "stress_testing": True}
+    ).json()["data"]["task_id"]
+    task = wait_terminal(client, tid)
+    assert task["status"] == "success", task.get("safe_error_message")
+    final = task["final_problem"]
+    assert final["testcase_generator"] is None
+    inputs = [case["input"] for case in final["problem"]["testcases"]]
+    assert len(inputs) == 6 and max(len(text) for text in inputs) >= 50_000
+    report = task["validation_report"]
+    assert report["wrong_solution_tle_cases"]["wrong_1"]
+
+
+def test_prompt_safe_draft_collapses_large_materialized_cases() -> None:
+    from backend.app.modules.agent.task_manager import AgentTaskManager
+    from backend.app.modules.problems.models import Testcase
+
+    generated = GeneratedProblem.model_validate(_generator_problem())
+    materialized = generated.model_copy(
+        update={
+            "problem": generated.problem.model_copy(
+                update={
+                    "testcases": [
+                        *generated.problem.testcases,
+                        Testcase(input="7 " * 5000 + "\n", output="35000\n"),
+                    ]
+                }
+            ),
+            "testcase_generator": None,
+        }
+    )
+    data = AgentTaskManager._prompt_safe_draft(materialized)
+    last = data["problem"]["testcases"][-1]
+    assert len(last["input"]) < 2000 and "__TRUNCATED_LARGE_CASE__" in last["input"]
+    assert data["problem"]["testcases"][0]["input"] == "1 2\n"
+
+
+def test_requirement_inputs_stress_toggle_only_sends_when_enabled():
+    app = AppTest.from_string("""
+import streamlit as st
+from frontend.pages.agent_workspace import requirement_inputs
+class Api:
+    base_url = "http://stress-fixture"
+    def get(self, path, **kwargs):
+        return {"data": []}
+st.session_state["captured"] = requirement_inputs(Api(), "stress", {"prompt": "题目"})
+""").run()
+    assert not app.exception
+    assert app.checkbox(key="stress_stress_testing").value is False
+    assert "stress_testing" not in app.session_state["captured"]
+    app.checkbox(key="stress_stress_testing").check().run()
+    assert app.session_state["captured"].get("stress_testing") is True
+    assert any(button.key == "stress_clear_stress_testing" for button in app.button)
+    app.button(key="stress_clear_stress_testing").click().run()
+    assert "stress_testing" not in app.session_state["captured"]
+    assert app.checkbox(key="stress_stress_testing").value is False
+
+
+def test_requirement_inputs_stress_seed_restores_saved_request():
+    app = AppTest.from_string("""
+import streamlit as st
+from frontend.pages.agent_workspace import requirement_inputs
+class Api:
+    base_url = "http://stress-seed-fixture"
+    def get(self, path, **kwargs):
+        return {"data": []}
+st.session_state["captured"] = requirement_inputs(
+    Api(), "seed", {"prompt": "题目", "stress_testing": True}
+)
+""").run()
+    assert not app.exception
+    assert app.checkbox(key="seed_stress_testing").value is True
+    assert app.session_state["captured"].get("stress_testing") is True
+
+
+def test_preview_clips_large_testcases_and_shows_sizes():
+    app = AppTest.from_string("""
+from frontend.pages.agent_workspace import preview
+preview({
+    "problem": {
+        "id": "x", "title": "t", "description": "d", "input_description": "i",
+        "output_description": "o", "constraints": "c",
+        "samples": [{"input": "1 2", "output": "3"}],
+        "testcases": [
+            {"input": "1 2", "output": "3"},
+            {"input": "7 " * 5000, "output": "35000"},
+        ],
+        "tags": [], "time_limit": 2, "memory_limit": 128, "difficulty": "e",
+    },
+    "solution_explanation": "s", "complexity_analysis": "c",
+    "reference_solution_language": "python", "reference_solution": "pass",
+}, {"blocking_errors": [], "unresolved_risks": [], "tool_evidence": []})
+""").run()
+    assert not app.exception
+    assert any("已截断" in (block.value or "") for block in app.code)
+    assert any("输入" in caption.value and "字符" in caption.value for caption in app.caption)
+
+
+def test_editor_rows_collapse_and_restore_large_cases():
+    from frontend.pages.agent_workspace import _editable_rows, _restore_rows
+
+    rows = [
+        {"input": "1 2", "output": "3"},
+        {"input": "7 " * 5000, "output": "35000"},
+    ]
+    displayed, restore = _editable_rows(rows)
+    assert len(restore) == 1 and displayed[0] == rows[0]
+    assert "__OJ_LARGE_CASE_1_input__" in displayed[1]["input"]
+    assert _restore_rows(displayed, restore) == rows
+    edited = [dict(displayed[0]), dict(displayed[1], input="rewritten")]
+    assert _restore_rows(edited, restore)[1]["input"] == "rewritten"
+
+
+def test_refine_can_introduce_generated_strong_cases(agent_client) -> None:
+    client, _, _ = agent_client
+    client.put("/api/agent/config", json=config_payload())
+    original = _new_success(client)
+    payload = _generator_problem()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": json.dumps(payload)}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            },
+        )
+
+    client.app.state.agent_model_client.transport = httpx.MockTransport(handler)
+    tid = client.post(
+        f"/api/agent/tasks/{original['task_id']}/refine", json={"feedback": "加大数据规模"}
+    ).json()["data"]["task_id"]
+    task = wait_terminal(client, tid)
+    assert task["status"] == "success", task.get("safe_error_message")
+    assert task["draft"]["testcase_generator"] is None
+    sizes = [len(case["input"]) for case in task["draft"]["problem"]["testcases"]]
+    assert len(sizes) == 6 and max(sizes) >= 50_000

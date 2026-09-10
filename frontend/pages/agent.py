@@ -150,7 +150,8 @@ def _config(api: ApiClient) -> None:
             )
         with section_card("执行策略", key="agent_policy", icon="⚙️"):
             st.caption(
-                "每次任务最多 4 分钟，包含排队、生成、修正和验证；到时停止并保留已有内容。"
+                "每次任务最多 8 分钟，包含排队、生成、大数据构造、修正和验证；"
+                "到时停止并保留已有内容。"
                 "GLM-5.3 使用低思考强度，实际单次输出上限为 16000 Token。"
             )
             policy_fields = st.columns(3)

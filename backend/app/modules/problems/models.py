@@ -45,6 +45,10 @@ class Problem(_StrictModel):
     tags: list[NonEmptyText] = Field(default_factory=list)
     time_limit: float = Field(default=3.0, strict=True, gt=0, allow_inf_nan=False)
     memory_limit: int = Field(default=128, strict=True, gt=0)
+    # Per-problem stdout capture limit; unset keeps the system-wide judge default.
+    output_limit_bytes: int | None = Field(
+        default=None, strict=True, ge=4096, le=8_388_608
+    )
     author: str = Field(default="", strict=True)
     difficulty: str = Field(default="", strict=True)
     problem_type: str = Field(default="", strict=True, max_length=100)

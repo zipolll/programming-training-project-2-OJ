@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from backend.app.core.config import Settings
+from backend.app.modules.agent import testcase_factory
 from backend.app.modules.agent.models import GeneratedProblem, ValidationReport
 from backend.app.modules.judge.language_service import LanguageService
 from backend.app.modules.judge.models import JudgeRequest, TestcaseStatus
@@ -15,6 +16,9 @@ from backend.app.modules.judge.service import JudgeService
 from backend.app.modules.problems.models import Problem, Testcase
 from backend.app.modules.problems.repository import ProblemRepository
 from backend.app.modules.problems.service import ProblemService
+
+# A stress testcase below this size cannot credibly separate algorithms.
+STRESS_MIN_INPUT_BYTES = 50_000
 
 
 class AgentToolError(RuntimeError):
@@ -125,6 +129,7 @@ class AgentTools:
 
     async def evaluate_counterexamples(self, generated: GeneratedProblem) -> dict[str, Any]:
         detections: dict[str, list[int]] = {}
+        tle_cases: dict[str, list[int]] = {}
         for index, code in enumerate(generated.wrong_solutions[:5], start=1):
             result = await self._judge(
                 generated.problem, generated.reference_solution_language, code
@@ -132,9 +137,16 @@ class AgentTools:
             detections[f"wrong_{index}"] = [
                 item.id for item in result.testcase_results if item.result is not TestcaseStatus.AC
             ]
+            tle_cases[f"wrong_{index}"] = [
+                item.id for item in result.testcase_results if item.result is TestcaseStatus.TLE
+            ]
             if result.status is TestcaseStatus.CE and not detections[f"wrong_{index}"]:
                 detections[f"wrong_{index}"] = [0]
-        return {"run": len(detections), "detections": detections}
+        return {
+            "run": len(detections),
+            "detections": detections,
+            "tle_cases": tle_cases,
+        }
 
     @staticmethod
     async def analyze_test_coverage(problem: Problem) -> dict[str, Any]:
@@ -156,11 +168,70 @@ class AgentTools:
             "maximum_input_bytes": max(sizes, default=0),
         }
 
+    async def materialize_testcases(
+        self, generated: GeneratedProblem
+    ) -> tuple[GeneratedProblem, ValidationReport | None]:
+        """Execute the draft's testcase generator and derive expected outputs.
+
+        Returns the updated draft plus a report when any generator or reference
+        run failed; on success the generator field is consumed and the produced
+        cases are appended to the problem's testcases.
+        """
+        generator = generated.testcase_generator
+        if generator is None:
+            return generated, None
+        executable = await testcase_factory.python_executable(self.language_service)
+        inputs, errors, generator_evidence = await testcase_factory.run_generator_cases(
+            generator, executable
+        )
+        outputs: list[str | None] = []
+        reference_evidence: list[dict[str, Any]] = []
+        if any(case_input is not None for case_input in inputs):
+            outputs, reference_errors, reference_evidence = (
+                await testcase_factory.run_reference_for_outputs(
+                    generated, inputs, self.language_service, self.settings
+                )
+            )
+            errors.extend(reference_errors)
+        cases = [
+            Testcase(input=case_input, output=case_output)
+            # Non-strict zip: outputs stays empty when every generator run failed.
+            for case_input, case_output in zip(inputs, outputs, strict=False)
+            if case_input is not None and case_output is not None
+        ]
+        problem = generated.problem.model_copy(
+            update={"testcases": [*generated.problem.testcases, *cases]}
+        )
+        if errors:
+            report = ValidationReport(
+                schema_valid=True,
+                testcase_count=len(problem.testcases),
+                blocking_errors=errors,
+                tool_evidence=[
+                    {
+                        "tool": "materialize_testcases",
+                        "result": {
+                            "generator": generator_evidence,
+                            "reference": reference_evidence,
+                        },
+                    }
+                ],
+            )
+            # Keep the generator so the revision loop still sees the failing spec.
+            return generated.model_copy(update={"problem": problem}), report
+        return (
+            generated.model_copy(
+                update={"problem": problem, "testcase_generator": None}
+            ),
+            None,
+        )
+
     async def build_validation_report(
         self,
         generated: GeneratedProblem,
         *,
         reference_only: bool = False,
+        stress_testing: bool = False,
     ) -> ValidationReport:
         schema = await self.validate_problem_schema(generated.problem.model_dump(mode="json"))
         # Compile the reference once and reuse identical sample/test input-output pairs.
@@ -287,6 +358,21 @@ class AgentTools:
             risks.append("no counterexample solution was supplied")
         elif not distinguishes:
             blocking.append("one or more wrong solutions are not detected")
+        if stress_testing:
+            if coverage["maximum_input_bytes"] < STRESS_MIN_INPUT_BYTES:
+                blocking.append(
+                    f"strong data not achieved: the largest testcase input is only "
+                    f"{coverage['maximum_input_bytes']} bytes (at least "
+                    f"{STRESS_MIN_INPUT_BYTES} required); use testcase_generator to "
+                    "produce maximum-scale stress cases"
+                )
+            if not any(counterexamples["tle_cases"].values()):
+                blocking.append(
+                    "strong data not achieved: no wrong solution times out (TLE) on "
+                    "any testcase; include the intended-to-reject brute force as a "
+                    "wrong solution and enlarge the max-scale generated cases until "
+                    "it exceeds the time limit while the reference stays well below it"
+                )
         if "large_input" not in coverage["boundary_types"]:
             risks.append("large-input coverage was not demonstrated")
         return ValidationReport(
@@ -300,6 +386,7 @@ class AgentTools:
             distinguishes_bruteforce=distinguishes,
             wrong_solutions_run=counterexamples["run"],
             wrong_solution_detections=detections,
+            wrong_solution_tle_cases=counterexamples["tle_cases"],
             blocking_errors=blocking,
             unresolved_risks=risks,
             tool_evidence=[
