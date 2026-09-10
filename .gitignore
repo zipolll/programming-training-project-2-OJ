@@ -30,6 +30,9 @@ data/*.sqlite*
 !data/runtime/.gitkeep
 data/problems/.*.tmp
 
+# Local problem data is kept out of the repository
+data/problems/*.json
+
 # Judge artifacts
 judge-workspace/
 *.exe
@@ -38,3 +41,7 @@ node_modules/
 
 # Plugin runtime artifacts
 .video_agent/
+.zcode/
+
+# Local experiment report and generated screenshots/PDF
+/local_report/
